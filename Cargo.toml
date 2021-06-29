@@ -1,5 +1,5 @@
 [package]
-name = "rusty-kitchen"
+name = "rchef"
 version = "0.1.0"
 authors = ["bool <booleancoercion@gmail.com>"]
 edition = "2018"
