@@ -10,7 +10,7 @@ pub enum SubTokenKind<'a> {
     Word(&'a str),
     FullStop,
     BlankLine,
-    EOF,
+    Eof,
 
     InvalidChar(char),
 }
@@ -55,7 +55,7 @@ impl<'a> FirstPassLexer<'a> {
             self.scan_subtoken();
         }
 
-        self.add_subtoken(SubTokenKind::EOF);
+        self.add_subtoken(SubTokenKind::Eof);
         self.subtokens
     }
 

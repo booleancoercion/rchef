@@ -8,3 +8,5 @@ edition = "2018"
 
 [dependencies]
 thiserror = "1.0.25"
+if_chain = "1.0.1"
+lazy_static = "1.4.0"

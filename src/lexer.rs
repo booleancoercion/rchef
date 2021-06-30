@@ -6,6 +6,6 @@ pub use second_pass::{Token, TokenKind};
 
 pub fn process(source: &str) -> Result<Vec<Token>> {
     let subtokens = first_pass::process(source);
-    let tokens = second_pass::process(subtokens)?;
+    let tokens = second_pass::process(source, subtokens)?;
     todo!()
 }

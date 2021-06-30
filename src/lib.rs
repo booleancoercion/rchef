@@ -12,7 +12,7 @@ pub type Result<T> = result::Result<T, RChefError>;
 #[derive(Debug, Error)]
 pub enum RChefError {
     #[error("io error while running: {0}")]
-    IO(#[from] io::Error),
+    Io(#[from] io::Error),
 
     #[error("lex error")]
     Lex,
