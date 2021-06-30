@@ -1,12 +1,13 @@
-#[derive(Clone, Debug)]
-pub struct SubToken {
-    pub kind: SubTokenKind,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SubToken<'a> {
+    pub kind: SubTokenKind<'a>,
     pub line: u32,
+    pub range: (usize, usize),
 }
 
-#[derive(Clone, Debug)]
-pub enum SubTokenKind {
-    Word(String),
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubTokenKind<'a> {
+    Word(&'a str),
     FullStop,
     BlankLine,
     EOF,
@@ -25,11 +26,15 @@ struct FirstPassLexer<'a> {
     line: u32,
     start: usize,
     current: usize,
-    subtokens: Vec<SubToken>,
+    subtokens: Vec<SubToken<'a>>,
 }
 
 fn is_whitespace(c: char) -> bool {
     c == ' ' || c == '\r' || c == '\n'
+}
+
+fn is_identifier_char(c: char) -> bool {
+    c.is_alphanumeric()
 }
 
 impl<'a> FirstPassLexer<'a> {
@@ -44,7 +49,7 @@ impl<'a> FirstPassLexer<'a> {
         }
     }
 
-    fn process(mut self) -> Vec<SubToken> {
+    fn process(mut self) -> Vec<SubToken<'a>> {
         while !self.is_at_end() {
             self.start = self.current;
             self.scan_subtoken();
@@ -74,7 +79,7 @@ impl<'a> FirstPassLexer<'a> {
             }
 
             ch => {
-                if ch.is_alphanumeric() {
+                if is_identifier_char(ch) {
                     self.identifier();
                 } else {
                     self.add_subtoken(SubTokenKind::InvalidChar(ch));
@@ -84,25 +89,31 @@ impl<'a> FirstPassLexer<'a> {
     }
 
     fn identifier(&mut self) {
-        while self.peek().is_alphanumeric() {
+        while is_identifier_char(self.peek()) {
             self.advance();
         }
 
         let s = self.current_substring();
-        self.add_subtoken(SubTokenKind::Word(s.to_string()));
+        self.add_subtoken(SubTokenKind::Word(s));
     }
 
-    fn current_substring(&self) -> &'a str {
+    fn current_range(&self) -> (usize, usize) {
         let start = self.indices[self.start].0;
         let end = self.indices[self.current].0;
 
+        (start, end)
+    }
+
+    fn current_substring(&self) -> &'a str {
+        let (start, end) = self.current_range();
         &self.source[start..end]
     }
 
-    fn add_subtoken(&mut self, kind: SubTokenKind) {
+    fn add_subtoken(&mut self, kind: SubTokenKind<'a>) {
         self.subtokens.push(SubToken {
             kind,
             line: self.line,
+            range: self.current_range(),
         })
     }
 
