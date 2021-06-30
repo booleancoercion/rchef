@@ -24,7 +24,8 @@ pub enum RChefError {
 pub fn run(filename: &str) -> Result<()> {
     let source = fs::read_to_string(filename)?;
 
-    let coin = lexer::process(&source)?;
+    let tokens = lexer::process(&source);
+    println!("{:?}", tokens);
 
     Ok(())
 }

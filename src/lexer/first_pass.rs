@@ -1,166 +1,134 @@
-use std::iter::Peekable;
-use std::str::CharIndices;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Token<'a> {
-    pub kind: TokenKind<'a>,
+#[derive(Clone, Debug)]
+pub struct SubToken {
+    pub kind: SubTokenKind,
     pub line: u32,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TokenKind<'a> {
-    Word(&'a str),
+#[derive(Clone, Debug)]
+pub enum SubTokenKind {
+    Word(String),
     FullStop,
-    InvalidWhitespace,
-    InvalidChar,
-    NonWhitespace,
+    BlankLine,
+    EOF,
+
+    InvalidChar(char),
+}
+
+pub fn process(source: &str) -> Vec<SubToken> {
+    FirstPassLexer::new(source).process()
 }
 
 #[derive(Debug)]
 struct FirstPassLexer<'a> {
     source: &'a str,
-    indices: Peekable<CharIndices<'a>>,
+    indices: Vec<(usize, char)>,
     line: u32,
-    current: usize,
     start: usize,
-    end: usize,
-    tokens: Vec<Token<'a>>,
+    current: usize,
+    subtokens: Vec<SubToken>,
 }
 
-pub fn process(source: &str) -> Vec<Token> {
-    FirstPassLexer::new(source).process()
+fn is_whitespace(c: char) -> bool {
+    c == ' ' || c == '\r' || c == '\n'
 }
 
 impl<'a> FirstPassLexer<'a> {
     fn new(source: &'a str) -> Self {
         Self {
             source,
-            indices: source.char_indices().peekable(),
+            indices: source.char_indices().collect(),
             line: 0,
-            current: 0,
             start: 0,
-            end: 0,
-            tokens: Vec::new(),
+            current: 0,
+            subtokens: Vec::new(),
         }
     }
 
-    fn process(mut self) -> Vec<Token<'a>> {
-        while let Some((i, ch)) = self.indices.next() {
-            self.current = i;
-
-            if ch.is_alphanumeric() {
-                // update the end of the current token
-                self.end = self.next_index().unwrap_or_else(|| self.source.len());
-            } else if ch == '.' {
-                self.dot();
-            } else if ch.is_ascii_whitespace() && ch != '\n' {
-                self.end_token();
-
-                // ascii whitespace is always 1 byte long
-                self.start += 1;
-                self.end += 1;
-            } else if ch == '\n' {
-                self.end_token();
-                self.line += 1;
-                self.start += 1;
-                self.end += 1;
-            } else if ch.is_whitespace() {
-                self.invalid_whitespace();
-            } else {
-                self.invalid_char();
-            }
+    fn process(mut self) -> Vec<SubToken> {
+        while !self.is_at_end() {
+            self.start = self.current;
+            self.scan_subtoken();
         }
 
-        self.end_token();
-
-        self.tokens
+        self.add_subtoken(SubTokenKind::EOF);
+        self.subtokens
     }
 
-    fn dot(&mut self) {
-        if self.end > self.start {
-            self.end_token();
-        }
+    fn scan_subtoken(&mut self) {
+        let ch = self.advance();
 
-        self.end += 1; // '.' is one byte long
-        self.end_token();
-        if let Some((_, ch)) = self.indices.next() {
-            if !ch.is_ascii_whitespace() {
-                if ch.is_whitespace() {
-                    self.invalid_whitespace();
+        match ch {
+            '.' => {
+                if !is_whitespace(self.peek()) {
+                    self.add_subtoken(SubTokenKind::InvalidChar(ch));
                 } else {
-                    self.non_whitespace();
+                    self.add_subtoken(SubTokenKind::FullStop);
+                }
+            }
+            '\r' | ' ' => {}
+            '\n' => {
+                self.line += 1;
+                if self.last_line() + 2 == self.line {
+                    self.add_subtoken(SubTokenKind::BlankLine);
+                }
+            }
+
+            ch => {
+                if ch.is_alphanumeric() {
+                    self.identifier();
+                } else {
+                    self.add_subtoken(SubTokenKind::InvalidChar(ch));
                 }
             }
         }
     }
 
-    fn end_token(&mut self) {
-        if self.start < self.end {
-            let slice = &self.source[self.start..self.end];
-
-            if slice == "." {
-                self.tokens.push(Token {
-                    kind: TokenKind::FullStop,
-                    line: self.line,
-                });
-            } else {
-                self.tokens.push(Token {
-                    kind: TokenKind::Word(slice),
-                    line: self.line,
-                })
-            }
-        }
-        self.start = self.current;
-        self.end = self.current;
-    }
-
-    fn invalid_something(&mut self) {
-        self.end_token();
-        self.current = self.next_stop();
-        self.start = self.current;
-        self.end = self.current;
-    }
-
-    fn invalid_whitespace(&mut self) {
-        self.invalid_something();
-
-        if let Some(last) = self.tokens.last() {
-            if last.kind == TokenKind::InvalidWhitespace && last.line == self.line {
-                return;
-            }
+    fn identifier(&mut self) {
+        while self.peek().is_alphanumeric() {
+            self.advance();
         }
 
-        self.tokens.push(Token {
-            kind: TokenKind::InvalidWhitespace,
+        let s = self.current_substring();
+        self.add_subtoken(SubTokenKind::Word(s.to_string()));
+    }
+
+    fn current_substring(&self) -> &'a str {
+        let start = self.indices[self.start].0;
+        let end = self.indices[self.current].0;
+
+        &self.source[start..end]
+    }
+
+    fn add_subtoken(&mut self, kind: SubTokenKind) {
+        self.subtokens.push(SubToken {
+            kind,
             line: self.line,
-        });
+        })
     }
 
-    fn invalid_char(&mut self) {
-        self.invalid_something();
-
-        self.tokens.push(Token {
-            kind: TokenKind::InvalidChar,
-            line: self.line,
-        });
+    fn advance(&mut self) -> char {
+        let ch = self.indices[self.current].1;
+        self.current += 1;
+        ch
     }
 
-    fn non_whitespace(&mut self) {
-        self.invalid_something();
-
-        self.tokens.push(Token {
-            kind: TokenKind::NonWhitespace,
-            line: self.line,
-        });
+    fn peek(&self) -> char {
+        if self.is_at_end() {
+            '\0'
+        } else {
+            self.indices[self.current].1
+        }
     }
 
-    fn next_index(&mut self) -> Option<usize> {
-        self.indices.peek().map(|&(i, _)| i)
+    fn is_at_end(&self) -> bool {
+        self.current >= self.indices.len()
     }
 
-    /// Same as next_index, but returns the length of source in case the next index
-    /// doesn't exist.
-    fn next_stop(&mut self) -> usize {
-        self.next_index().unwrap_or_else(|| self.source.len())
+    fn last_line(&self) -> u32 {
+        if let Some(subtoken) = self.subtokens.last() {
+            subtoken.line
+        } else {
+            self.line
+        }
     }
 }

@@ -1,8 +1,8 @@
-use crate::lexer::Coin;
+use crate::lexer::Token;
 use crate::Result;
 
 pub struct Recipe {}
 
-pub fn process(coins: &[Coin]) -> Result<Vec<Recipe>> {
+pub fn process(coins: &[Token]) -> Result<Vec<Recipe>> {
     todo!()
 }

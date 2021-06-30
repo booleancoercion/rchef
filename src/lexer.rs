@@ -2,11 +2,9 @@ mod first_pass;
 mod second_pass;
 
 use crate::Result;
-pub use first_pass::{Token, TokenKind};
-pub use second_pass::{Coin, CoinKind};
+pub use second_pass::{Token, TokenKind};
 
-pub fn process(source: &str) -> Result<Vec<Coin>> {
-    let tokens = first_pass::process(source);
-    println!("{:?}", tokens);
+pub fn process(source: &str) -> Result<Vec<Token>> {
+    let subtokens = first_pass::process(source);
     todo!()
 }
