@@ -64,13 +64,19 @@ impl<'a> FirstPassLexer<'a> {
 
         match ch {
             '.' => {
-                if self.peek().map_or_else(|| false, |c| !is_whitespace(c)) {
+                if self.peek_match(|c| !is_whitespace(c)) {
                     self.add_subtoken(SubTokenKind::InvalidChar(ch));
                 } else {
                     self.add_subtoken(SubTokenKind::FullStop);
                 }
             }
-            '\r' | ' ' => {}
+            '\r' => {}
+            ' ' => {
+                if self.peek_match(|c| c == ' ') {
+                    self.add_subtoken(SubTokenKind::InvalidChar(' '));
+                    // not advancing, to catch multiple spaces in a row
+                }
+            }
             '\n' => self.newline(),
             ch => {
                 if is_identifier_char(ch) {
@@ -147,6 +153,13 @@ impl<'a> FirstPassLexer<'a> {
             None
         } else {
             Some(self.indices[self.current].1)
+        }
+    }
+
+    fn peek_match(&self, f: impl FnOnce(char) -> bool) -> bool {
+        match self.peek() {
+            Some(ch) => f(ch),
+            None => false,
         }
     }
 
