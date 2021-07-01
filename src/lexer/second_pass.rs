@@ -51,7 +51,7 @@ struct SecondPassLexer<'a> {
     current: usize,
     tokens: Vec<Token>,
     errored: bool,
-    at_title: bool,
+    stage: Stage,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +59,13 @@ enum ParseNumIdentError {
     InvalidFormat,
     AlmostValidFormat,
     OutOfRange,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stage {
+    Title,
+    Method,
+    Serves,
 }
 
 #[rustfmt::skip]
@@ -120,7 +127,7 @@ impl<'a> SecondPassLexer<'a> {
             current: 0,
             tokens: Vec::new(),
             errored: false,
-            at_title: true,
+            stage: Stage::Title,
         }
     }
 
@@ -143,12 +150,28 @@ impl<'a> SecondPassLexer<'a> {
         self.line = st.line;
 
         match st.kind {
-            SubTokenKind::BlankLine => self.add_token(TokenKind::BlankLine),
+            SubTokenKind::BlankLine => {
+                if_chain! {
+                    if self.stage == Stage::Method;
+                    if let Some(SubToken { kind: SubTokenKind::Word("Serves"), .. }) = self.peek();
+                    then {
+                        self.stage = Stage::Serves;
+                    } else {
+                        self.stage = Stage::Title;
+                    }
+                }
+
+                if self.stage == Stage::Serves {
+                    self.stage = Stage::Title;
+                }
+
+                self.add_token(TokenKind::BlankLine)
+            }
             SubTokenKind::NewLine => self.add_token(TokenKind::NewLine),
             SubTokenKind::Eof => self.add_token(TokenKind::Eof),
             SubTokenKind::InvalidChar(c) => self.invalid_char(c),
             SubTokenKind::Word(w) => {
-                if self.at_title {
+                if self.stage == Stage::Title {
                     self.title();
                 } else if let Some(x) = matches_single_keyword(&st) {
                     self.add_token(x);
@@ -215,7 +238,7 @@ impl<'a> SecondPassLexer<'a> {
                 }
             }
             SubTokenKind::FullStop => {
-                if self.at_title {
+                if self.stage == Stage::Title {
                     // the full stop should not be at the beginning!
                     // if there was already a title, this case wouldn't happen.
                     self.invalid_char('.');
@@ -259,7 +282,7 @@ impl<'a> SecondPassLexer<'a> {
 
     #[rustfmt::skip]
     fn title(&mut self) {
-        self.at_title = false;
+        self.stage = Stage::Method;
         while let Some(SubToken { kind: SubTokenKind::Word(_), .. }) = self.peek() {
             self.advance();
         }
