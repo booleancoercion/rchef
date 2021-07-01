@@ -30,6 +30,6 @@ pub fn run(filename: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn report_error(line: u32, prefix: &str, msg: String) {
+pub fn report_error<S: std::fmt::Display>(line: u32, prefix: &str, msg: S) {
     eprintln!("[line {}] {}error: {}", line + 1, prefix, msg);
 }

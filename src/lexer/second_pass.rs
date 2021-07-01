@@ -3,9 +3,11 @@ use crate::{RChefError, Result};
 
 use if_chain::if_chain;
 use lazy_static::lazy_static;
+use phf::{phf_map, Map};
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
+use std::result::Result as StdResult;
 
 #[derive(Clone, Debug, PartialEq)]
 #[rustfmt::skip]
@@ -38,12 +40,11 @@ pub struct Token {
     pub line: u32,
 }
 
-pub fn process(source: &str, subtokens: Vec<SubToken>) -> Result<Vec<Token>> {
-    SecondPassLexer::new(source, subtokens).process()
+pub fn process(subtokens: Vec<SubToken>) -> Result<Vec<Token>> {
+    SecondPassLexer::new(subtokens).process()
 }
 
 struct SecondPassLexer<'a> {
-    source: &'a str,
     subtokens: Vec<SubToken<'a>>,
     line: u32,
     start: usize,
@@ -53,34 +54,66 @@ struct SecondPassLexer<'a> {
     at_title: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParseNumIdentError {
+    InvalidFormat,
+    AlmostValidFormat,
+    OutOfRange,
+}
+
 #[rustfmt::skip]
-fn is_ordinal(ident: &str) -> Option<NonZeroU32> {
-    if !ident.ends_with("1st")
-        && !ident.ends_with("2nd")
-        && !ident.ends_with("3rd")
+fn parse_ordinal(ident: &str) -> StdResult<NonZeroU32, ParseNumIdentError> {
+    use ParseNumIdentError::*;
+
+    if !ident.ends_with("st")
+        && !ident.ends_with("nd")
+        && !ident.ends_with("rd")
         && !ident.ends_with("th")
     {
-        return None;
+        return Err(InvalidFormat);
+
     }
 
     // this will never panic, because we know the last two chars are ascii
     let nums = &ident[..ident.len() - 2];
-    let chars = nums.chars();
+    if nums.chars().any(|c| !('0'..='9').contains(&c)) {
+        Err(InvalidFormat)
+    } else if (!ident.ends_with("1st")
+        && !ident.ends_with("2nd")
+        && !ident.ends_with("3rd")
+        && !ident.ends_with("th"))
 
-    if ident.is_empty() 
-        || chars.next().unwrap() == '0'
-        || chars.any(|c| !('0'..='9').contains(&c))
+        || nums.starts_with('0')
     {
-        return None;
+        Err(AlmostValidFormat)
+    } else {
+        nums.parse().map_err(|_| OutOfRange)
     }
+}
 
-    nums.parse().ok()
+fn parse_numeric(ident: &str) -> StdResult<i64, ParseNumIdentError> {
+    use ParseNumIdentError::*;
+
+    if ident.is_empty() || ident.chars().any(|c| !('0'..='9').contains(&c)) {
+        Err(InvalidFormat)
+    } else if ident.starts_with('0') {
+        Err(AlmostValidFormat)
+    } else {
+        ident.parse().map_err(|_| OutOfRange)
+    }
+}
+
+fn get_word<'a>(st: &SubToken<'a>) -> Option<&'a str> {
+    if let SubTokenKind::Word(w) = st.kind {
+        Some(w)
+    } else {
+        None
+    }
 }
 
 impl<'a> SecondPassLexer<'a> {
-    fn new(source: &'a str, subtokens: Vec<SubToken<'a>>) -> Self {
+    fn new(subtokens: Vec<SubToken<'a>>) -> Self {
         Self {
-            source,
             subtokens,
             line: 0,
             start: 0,
@@ -113,11 +146,59 @@ impl<'a> SecondPassLexer<'a> {
             SubTokenKind::BlankLine => self.add_token(TokenKind::BlankLine),
             SubTokenKind::Eof => self.add_token(TokenKind::Eof),
             SubTokenKind::InvalidChar(c) => self.invalid_char(c),
-            SubTokenKind::Word(_) => {
+            SubTokenKind::Word(w) => {
                 if self.at_title {
                     self.title();
+                } else if let Some(x) = matches_single_keyword(&st) {
+                    self.add_token(x);
                 } else {
-                    self.identifier();
+                    use ParseNumIdentError::*;
+
+                    match parse_numeric(w) {
+                        Err(InvalidFormat) => {},
+                        Err(AlmostValidFormat) => {
+                            crate::report_error(self.line, "numeric ", "invalid number literal");
+                            self.errored = true;
+                            return;
+                        },
+                        Err(OutOfRange) => {
+                            crate::report_error(self.line, "numeric ", "number literal out of range");
+                            self.errored = true;
+                            return;
+                        },
+                        Ok(n) => {
+                            self.add_token(TokenKind::Number(n));
+                            return;
+                        }
+                    }
+
+                    match parse_ordinal(w) {
+                        Err(InvalidFormat) => {},
+                        Err(AlmostValidFormat) => {
+                            crate::report_error(self.line, "numeric ", "invalid ordinal identifier");
+                            self.errored = true;
+                            return;
+                        },
+                        Err(OutOfRange) => {
+                            crate::report_error(self.line, "numeric ", "ordinal identifier out of range");
+                            self.errored = true;
+                            return;
+                        },
+                        Ok(n) => {
+                            self.add_token(TokenKind::Ordinal(n));
+                            return;
+                        }
+                    }
+                    if_chain! {
+                        if let Some(next) = self.peek();
+                        if let Some(x) = matches_double_keyword(&st, &next);
+                        then {
+                            self.advance(); // consume the second token
+                            self.add_token(x);
+                        } else {
+                            self.identifier();
+                        }
+                    }
                 }
             }
             SubTokenKind::FullStop => {
@@ -132,58 +213,51 @@ impl<'a> SecondPassLexer<'a> {
         }
     }
 
+    fn accumulate_words(&self) -> String {
+        // the 'first' distinction allows to not have a space at the beginning
+        let first = get_word(&self.subtokens[self.start]).unwrap().to_string();
+        
+        self.subtokens[self.start+1..self.current]
+        .iter()
+        .fold(
+            first,
+            |mut acc, x| {
+                acc.push(' ');
+                acc.push_str(get_word(x).unwrap());
+
+                acc
+            })
+    }
+
     #[rustfmt::skip]
     fn identifier(&mut self) {
-        if let Some(x) = self.matches_single_keyword() {
-            self.add_token(x);
-        } else if let Some(x) = self.matches_double_keyword() {
-            self.advance(); // consume the second token
-            self.add_token(x);
-        } else {
-            while let Some(SubToken { kind: SubTokenKind::Word(_), .. }) = self.peek() {
-                if self.matches_single_keyword().is_some()
-                    || self.matches_double_keyword().is_some()
-                {
+        while let Some(st @ SubToken { kind: SubTokenKind::Word(_), .. }) = self.peek() {
+            if st.line > self.line || matches_single_keyword(&st).is_some() {
+                break;
+            } else if let Some(st2) = self.peek_nth(1) {
+                if matches_double_keyword(&st, &st2).is_some() {
                     break;
                 }
-
-                self.line = self.advance().line;
             }
 
-            let (start, end) = self.current_range();
-            let s = &self.source[start..end];
-
-            if s.chars().all(|c| ('0'..='9').contains(&c)) {
-                // if the string is wholly composed of numbers
-                let n = s.parse();
-                if let Ok(n) = n {
-                    self.add_token(TokenKind::Number(n));
-                } else {
-                    crate::report_error(
-                        self.line,
-                        "numeric ",
-                        "invalid number literal (numbers must fit into a signed 64-bit integer)".into()
-                    );
-                    self.errored = true;
-                }
-            } else if let Some(n) = is_ordinal(s) {
-                self.add_token(TokenKind::Ordinal(n));
-            } else {
-                self.add_token(TokenKind::Identifier(s.into()));
-            }
+            self.advance();
         }
+
+        self.add_token(TokenKind::Identifier(self.accumulate_words()));
     }
 
     #[rustfmt::skip]
     fn title(&mut self) {
         self.at_title = false;
-        while let Some(SubToken { kind: SubTokenKind::Word(_), .. }) = self.peek() {
+        while let Some(SubToken { kind: SubTokenKind::Word(_), line, .. }) = self.peek() {
+            if line > self.line {
+                break;
+            }
+            
             self.advance();
         }
 
-        let (start, end) = self.current_range();
-        let s = &self.source[start..end];
-        self.add_token(TokenKind::Identifier(s.to_string()));
+        self.add_token(TokenKind::Identifier(self.accumulate_words()));
 
         let mut should_continue = true;
 
@@ -194,7 +268,7 @@ impl<'a> SecondPassLexer<'a> {
             crate::report_error(
                 self.line,
                 "syntax ",
-                "expected FULLSTOP '.' at end of recipe title".into(),
+                "expected FULLSTOP '.' at end of recipe title",
             );
             self.errored = true;
             should_continue = false;
@@ -207,7 +281,7 @@ impl<'a> SecondPassLexer<'a> {
             crate::report_error(
                 self.line,
                 "syntax ",
-                "expected BLANKLINE at end of recipe title after FULLSTOP".into(),
+                "expected BLANKLINE at end of recipe title after FULLSTOP",
             );
             self.errored = true;
             should_continue = false;
@@ -254,13 +328,6 @@ impl<'a> SecondPassLexer<'a> {
         }
     }
 
-    fn current_range(&self) -> (usize, usize) {
-        let start = self.subtokens[self.start].range.0;
-        let end = self.subtokens[self.current].range.1;
-
-        (start, end)
-    }
-
     fn add_token(&mut self, kind: TokenKind) {
         self.tokens.push(Token {
             kind,
@@ -278,67 +345,86 @@ impl<'a> SecondPassLexer<'a> {
     }
 }
 
+fn matches_single_keyword(st: &SubToken) -> Option<TokenKind> {
+    if let SubTokenKind::Word(w) = st.kind {
+        SINGLE_KEYWORDS.get(w).cloned()
+    } else {
+        None
+    }
+}
+
+fn matches_double_keyword(st1: &SubToken, st2: &SubToken) -> Option<TokenKind> {
+    if_chain! {
+        if let SubTokenKind::Word(w1) = st1.kind;
+        if let SubTokenKind::Word(w2) = st2.kind;
+        then {
+            DOUBLE_KEYWORDS.get(&(w1, w2)).cloned()
+        } else {
+            None
+        }
+    }
+}
+
+static SINGLE_KEYWORDS: Map<&'static str, TokenKind> = {
+    use TokenKind::*;
+
+    phf_map! {
+        "Ingredients" => Ingredients,
+        "Method" => Method,
+        "g" => DryMeasure,
+        "kg" => DryMeasure,
+        "pinch" => DryMeasure,
+        "pinches" => DryMeasure,
+        "ml" => LiquidMeasure,
+        "l" => LiquidMeasure,
+        "dash" => LiquidMeasure,
+        "dashes" => LiquidMeasure,
+        "cup" => AmbiguousMeasure,
+        "cups" => AmbiguousMeasure,
+        "teaspoon" => AmbiguousMeasure,
+        "teaspoons" => AmbiguousMeasure,
+        "tablespoon" => AmbiguousMeasure,
+        "tablespoons" => AmbiguousMeasure,
+        "heaped" => MeasureType,
+        "level" => MeasureType,
+        "Take" => Take,
+        "Put" => Put,
+        "into" => Into,
+        "Fold" => Fold,
+        "Add" => Add,
+        "to" => To,
+        "Remove" => Remove,
+        "Combine" => Combine,
+        "Divide" => Divide,
+        "Liquefy" => Liquefy,
+        "the" => The,
+        "Stir" => Stir,
+        "for" => For,
+        "minutes" => Minutes,
+        "Mix" => Mix,
+        "well" => Well,
+        "Clean" => Clean,
+        "Pour" => Pour,
+        "until" => Until,
+        "Refrigerate" => Refrigerate,
+        "hours" => Hours,
+        "Serves" => Serves,
+    }
+};
+
 lazy_static! {
-    static ref SINGLE_KEYWORDS: HashMap<String, TokenKind> = {
+    static ref DOUBLE_KEYWORDS: HashMap<(&'static str, &'static str), TokenKind> = {
         use TokenKind::*;
 
-        let mut m = HashMap::new();
+        let mut m = HashMap::with_capacity(7 * 2);
 
-        m.insert("Ingredients".into(), Ingredients);
-        m.insert("Method".into(), Method);
-        m.insert("g".into(), DryMeasure);
-        m.insert("kg".into(), DryMeasure);
-        m.insert("pinch".into(), DryMeasure);
-        m.insert("pinches".into(), DryMeasure);
-        m.insert("ml".into(), LiquidMeasure);
-        m.insert("l".into(), LiquidMeasure);
-        m.insert("dash".into(), LiquidMeasure);
-        m.insert("dashes".into(), LiquidMeasure);
-        m.insert("cup".into(), AmbiguousMeasure);
-        m.insert("cups".into(), AmbiguousMeasure);
-        m.insert("teaspoon".into(), AmbiguousMeasure);
-        m.insert("teaspoons".into(), AmbiguousMeasure);
-        m.insert("tablespoon".into(), AmbiguousMeasure);
-        m.insert("tablespoons".into(), AmbiguousMeasure);
-        m.insert("heaped".into(), MeasureType);
-        m.insert("level".into(), MeasureType);
-        m.insert("Take".into(), Take);
-        m.insert("Put".into(), Put);
-        m.insert("into".into(), Into);
-        m.insert("Fold".into(), Fold);
-        m.insert("Add".into(), Add);
-        m.insert("to".into(), To);
-        m.insert("Remove".into(), Remove);
-        m.insert("Combine".into(), Combine);
-        m.insert("Divide".into(), Divide);
-        m.insert("Liquefy".into(), Liquefy);
-        m.insert("the".into(), The);
-        m.insert("Stir".into(), Stir);
-        m.insert("for".into(), For);
-        m.insert("minutes".into(), Minutes);
-        m.insert("Mix".into(), Mix);
-        m.insert("well".into(), Well);
-        m.insert("Clean".into(), Clean);
-        m.insert("Pour".into(), Pour);
-        m.insert("until".into(), Until);
-        m.insert("Refrigerate".into(), Refrigerate);
-        m.insert("hours".into(), Hours);
-        m.insert("Serves".into(), Serves);
-
-        m
-    };
-    static ref DOUBLE_KEYWORDS: HashMap<(String, String), TokenKind> = {
-        use TokenKind::*;
-
-        let mut m = HashMap::new();
-
-        m.insert(("from".into(), "refrigerator".into()), FromRefrigerator);
-        m.insert(("mixing".into(), "bowl".into()), MixingBowl);
-        m.insert(("dry".into(), "ingredients".into()), DryIngredients);
-        m.insert(("contents".into(), "of".into()), ContentsOf);
-        m.insert(("baking".into(), "dish".into()), BakingDish);
-        m.insert(("Set".into(), "aside".into()), SetAside);
-        m.insert(("Serve".into(), "with".into()), ServeWith);
+        m.insert(("from", "refrigerator"), FromRefrigerator);
+        m.insert(("mixing", "bowl"), MixingBowl);
+        m.insert(("dry", "ingredients"), DryIngredients);
+        m.insert(("contents", "of"), ContentsOf);
+        m.insert(("baking", "dish"), BakingDish);
+        m.insert(("Set", "aside"), SetAside);
+        m.insert(("Serve", "with"), ServeWith);
 
         m
     };

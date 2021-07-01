@@ -2,7 +2,6 @@
 pub struct SubToken<'a> {
     pub kind: SubTokenKind<'a>,
     pub line: u32,
-    pub range: (usize, usize),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -99,7 +98,7 @@ impl<'a> FirstPassLexer<'a> {
 
     fn current_range(&self) -> (usize, usize) {
         let start = self.indices[self.start].0;
-        let end = self.indices[self.current].0;
+        let end = self.indices[self.current.min(self.indices.len() - 1)].0;
 
         (start, end)
     }
@@ -113,7 +112,6 @@ impl<'a> FirstPassLexer<'a> {
         self.subtokens.push(SubToken {
             kind,
             line: self.line,
-            range: self.current_range(),
         })
     }
 
