@@ -64,6 +64,7 @@ enum ParseNumIdentError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
     Title,
+    AfterTitle,
     Method,
     Serves,
 }
@@ -151,17 +152,17 @@ impl<'a> SecondPassLexer<'a> {
 
         match st.kind {
             SubTokenKind::BlankLine => {
-                if_chain! {
-                    if self.stage == Stage::Method;
-                    if let Some(SubToken { kind: SubTokenKind::Word("Serves"), .. }) = self.peek();
-                    then {
+                if self.stage == Stage::Method {
+                    if let Some(SubToken {
+                        kind: SubTokenKind::Word("Serves"),
+                        ..
+                    }) = self.peek()
+                    {
                         self.stage = Stage::Serves;
                     } else {
                         self.stage = Stage::Title;
                     }
-                }
-
-                if self.stage == Stage::Serves {
+                } else if self.stage == Stage::Serves {
                     self.stage = Stage::Title;
                 }
 
@@ -174,6 +175,9 @@ impl<'a> SecondPassLexer<'a> {
                 if self.stage == Stage::Title {
                     self.title();
                 } else if let Some(x) = matches_single_keyword(&st) {
+                    if x == TokenKind::Method {
+                        self.stage = Stage::Method;
+                    }
                     self.add_token(x);
                 } else {
                     use ParseNumIdentError::*;
@@ -282,7 +286,7 @@ impl<'a> SecondPassLexer<'a> {
 
     #[rustfmt::skip]
     fn title(&mut self) {
-        self.stage = Stage::Method;
+        self.stage = Stage::AfterTitle;
         while let Some(SubToken { kind: SubTokenKind::Word(_), .. }) = self.peek() {
             self.advance();
         }
