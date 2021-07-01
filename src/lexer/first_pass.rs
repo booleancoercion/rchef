@@ -8,6 +8,7 @@ pub struct SubToken<'a> {
 pub enum SubTokenKind<'a> {
     Word(&'a str),
     FullStop,
+    NewLine,
     BlankLine,
     Eof,
 
@@ -63,20 +64,14 @@ impl<'a> FirstPassLexer<'a> {
 
         match ch {
             '.' => {
-                if !is_whitespace(self.peek()) {
+                if self.peek().map_or_else(|| false, |c| !is_whitespace(c)) {
                     self.add_subtoken(SubTokenKind::InvalidChar(ch));
                 } else {
                     self.add_subtoken(SubTokenKind::FullStop);
                 }
             }
             '\r' | ' ' => {}
-            '\n' => {
-                self.line += 1;
-                if self.last_line() + 2 == self.line {
-                    self.add_subtoken(SubTokenKind::BlankLine);
-                }
-            }
-
+            '\n' => self.newline(),
             ch => {
                 if is_identifier_char(ch) {
                     self.identifier();
@@ -87,8 +82,34 @@ impl<'a> FirstPassLexer<'a> {
         }
     }
 
+    fn newline(&mut self) {
+        let mut count = 1;
+        while let Some(ch) = self.peek() {
+            if ch != '\n' && ch != '\r' {
+                break;
+            }
+
+            if ch == '\n' {
+                count += 1;
+            }
+            self.advance();
+        }
+
+        if count == 1 {
+            self.add_subtoken(SubTokenKind::NewLine);
+        } else {
+            for _ in 0..count {
+                self.line += 1;
+                self.add_subtoken(SubTokenKind::BlankLine);
+            }
+        }
+    }
+
     fn identifier(&mut self) {
-        while is_identifier_char(self.peek()) {
+        while let Some(ch) = self.peek() {
+            if !is_identifier_char(ch) {
+                break;
+            }
             self.advance();
         }
 
@@ -121,23 +142,15 @@ impl<'a> FirstPassLexer<'a> {
         ch
     }
 
-    fn peek(&self) -> char {
+    fn peek(&self) -> Option<char> {
         if self.is_at_end() {
-            '\0'
+            None
         } else {
-            self.indices[self.current].1
+            Some(self.indices[self.current].1)
         }
     }
 
     fn is_at_end(&self) -> bool {
         self.current >= self.indices.len()
-    }
-
-    fn last_line(&self) -> u32 {
-        if let Some(subtoken) = self.subtokens.last() {
-            subtoken.line
-        } else {
-            self.line
-        }
     }
 }

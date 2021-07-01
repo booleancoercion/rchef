@@ -31,7 +31,7 @@ pub enum TokenKind {
 
     Serves,
 
-    Eof, BlankLine, FullStop,
+    Eof, NewLine, BlankLine, FullStop,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -144,6 +144,7 @@ impl<'a> SecondPassLexer<'a> {
 
         match st.kind {
             SubTokenKind::BlankLine => self.add_token(TokenKind::BlankLine),
+            SubTokenKind::NewLine => self.add_token(TokenKind::NewLine),
             SubTokenKind::Eof => self.add_token(TokenKind::Eof),
             SubTokenKind::InvalidChar(c) => self.invalid_char(c),
             SubTokenKind::Word(w) => {
@@ -155,17 +156,21 @@ impl<'a> SecondPassLexer<'a> {
                     use ParseNumIdentError::*;
 
                     match parse_numeric(w) {
-                        Err(InvalidFormat) => {},
+                        Err(InvalidFormat) => {}
                         Err(AlmostValidFormat) => {
                             crate::report_error(self.line, "numeric ", "invalid number literal");
                             self.errored = true;
                             return;
-                        },
+                        }
                         Err(OutOfRange) => {
-                            crate::report_error(self.line, "numeric ", "number literal out of range");
+                            crate::report_error(
+                                self.line,
+                                "numeric ",
+                                "number literal out of range",
+                            );
                             self.errored = true;
                             return;
-                        },
+                        }
                         Ok(n) => {
                             self.add_token(TokenKind::Number(n));
                             return;
@@ -173,17 +178,25 @@ impl<'a> SecondPassLexer<'a> {
                     }
 
                     match parse_ordinal(w) {
-                        Err(InvalidFormat) => {},
+                        Err(InvalidFormat) => {}
                         Err(AlmostValidFormat) => {
-                            crate::report_error(self.line, "numeric ", "invalid ordinal identifier");
+                            crate::report_error(
+                                self.line,
+                                "numeric ",
+                                "invalid ordinal identifier",
+                            );
                             self.errored = true;
                             return;
-                        },
+                        }
                         Err(OutOfRange) => {
-                            crate::report_error(self.line, "numeric ", "ordinal identifier out of range");
+                            crate::report_error(
+                                self.line,
+                                "numeric ",
+                                "ordinal identifier out of range",
+                            );
                             self.errored = true;
                             return;
-                        },
+                        }
                         Ok(n) => {
                             self.add_token(TokenKind::Ordinal(n));
                             return;
@@ -216,12 +229,10 @@ impl<'a> SecondPassLexer<'a> {
     fn accumulate_words(&self) -> String {
         // the 'first' distinction allows to not have a space at the beginning
         let first = get_word(&self.subtokens[self.start]).unwrap().to_string();
-        
-        self.subtokens[self.start+1..self.current]
-        .iter()
-        .fold(
-            first,
-            |mut acc, x| {
+
+        self.subtokens[self.start + 1..self.current]
+            .iter()
+            .fold(first, |mut acc, x| {
                 acc.push(' ');
                 acc.push_str(get_word(x).unwrap());
 
@@ -232,7 +243,7 @@ impl<'a> SecondPassLexer<'a> {
     #[rustfmt::skip]
     fn identifier(&mut self) {
         while let Some(st @ SubToken { kind: SubTokenKind::Word(_), .. }) = self.peek() {
-            if st.line > self.line || matches_single_keyword(&st).is_some() {
+            if matches_single_keyword(&st).is_some() {
                 break;
             } else if let Some(st2) = self.peek_nth(1) {
                 if matches_double_keyword(&st, &st2).is_some() {
@@ -249,11 +260,7 @@ impl<'a> SecondPassLexer<'a> {
     #[rustfmt::skip]
     fn title(&mut self) {
         self.at_title = false;
-        while let Some(SubToken { kind: SubTokenKind::Word(_), line, .. }) = self.peek() {
-            if line > self.line {
-                break;
-            }
-            
+        while let Some(SubToken { kind: SubTokenKind::Word(_), .. }) = self.peek() {
             self.advance();
         }
 
@@ -297,9 +304,10 @@ impl<'a> SecondPassLexer<'a> {
                 if let SubToken { kind: SubTokenKind::BlankLine, .. } = st;
                 if let Some(SubToken { kind: SubTokenKind::Word(s), .. }) = self.peek_nth(1);
                 if s == "Ingredients" || s == "Method";
-                if let Some(SubToken { kind: SubTokenKind::FullStop, line: line1, .. }) = self.peek_nth(2);
-                if let Some(SubToken { line: line2, .. }) = self.peek_nth(3);
-                if line2 > line1;
+                if let Some(SubToken { kind: SubTokenKind::FullStop, .. }) = self.peek_nth(2);
+                if let Some(SubToken { kind, .. }) = self.peek_nth(3);
+                // a blank line shouldn't be accepted here but that will be checked in the parser
+                if kind == SubTokenKind::NewLine || kind == SubTokenKind::BlankLine;
                 then {
                     return;
                 }
