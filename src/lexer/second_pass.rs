@@ -233,8 +233,16 @@ impl<'a> SecondPassLexer<'a> {
                         if let Some(next) = self.peek();
                         if let Some(x) = matches_double_keyword(&st, &next);
                         then {
+                            let serve_with = x == TokenKind::ServeWith;
+
                             self.advance(); // consume the second token
                             self.add_token(x);
+
+                            if serve_with {
+                                // the split is because rust won't let me perform the
+                                // equality after using x
+                                self.serve_with();
+                            }
                         } else {
                             self.identifier();
                         }
@@ -265,6 +273,20 @@ impl<'a> SecondPassLexer<'a> {
 
                 acc
             })
+    }
+
+    fn serve_with(&mut self) {
+        while let Some(SubToken {
+            kind: SubTokenKind::Word(_),
+            ..
+        }) = self.peek()
+        {
+            self.advance();
+        }
+        if self.current <= self.start {
+            return;
+        }
+        self.add_token(TokenKind::Identifier(self.accumulate_words()));
     }
 
     #[rustfmt::skip]
