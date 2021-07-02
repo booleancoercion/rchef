@@ -69,6 +69,7 @@ enum Stage {
     Serves,
 }
 
+/// Attempts to parse an ordinal identifier, such as `121st`.
 #[rustfmt::skip]
 fn parse_ordinal(ident: &str) -> StdResult<NonZeroU32, ParseNumIdentError> {
     use ParseNumIdentError::*;
@@ -99,6 +100,7 @@ fn parse_ordinal(ident: &str) -> StdResult<NonZeroU32, ParseNumIdentError> {
     }
 }
 
+/// Attempts to parse a numeric identifier/literal.
 fn parse_numeric(ident: &str) -> StdResult<i64, ParseNumIdentError> {
     use ParseNumIdentError::*;
 
@@ -111,6 +113,8 @@ fn parse_numeric(ident: &str) -> StdResult<i64, ParseNumIdentError> {
     }
 }
 
+/// Returns the contained word in the given subtoken,
+/// or None if the subtoken is not a Word.
 fn get_word<'a>(st: &SubToken<'a>) -> Option<&'a str> {
     if let SubTokenKind::Word(w) = st.kind {
         Some(w)
@@ -132,6 +136,7 @@ impl<'a> SecondPassLexer<'a> {
         }
     }
 
+    /// Processes the entire list of given subtokens.
     fn process(mut self) -> Result<Vec<Token>> {
         while !self.is_at_end() {
             self.start = self.current;
@@ -145,6 +150,7 @@ impl<'a> SecondPassLexer<'a> {
         }
     }
 
+    /// Scans the next bunch of tokens.
     fn scan_token(&mut self) {
         let st = self.advance();
 
@@ -261,6 +267,8 @@ impl<'a> SecondPassLexer<'a> {
         }
     }
 
+    /// Accumulates all of the words in the current range into a single string,
+    /// to be used when parsing identifiers.
     fn accumulate_words(&self) -> String {
         // the 'first' distinction allows to not have a space at the beginning
         let first = get_word(&self.subtokens[self.start]).unwrap().to_string();
@@ -275,6 +283,9 @@ impl<'a> SecondPassLexer<'a> {
             })
     }
 
+    /// Defines the behavior of what happens after encountering a
+    /// `Serve with ...` statement. This is necessary to correctly
+    /// parse title identifiers.
     fn serve_with(&mut self) {
         while let Some(SubToken {
             kind: SubTokenKind::Word(_),
@@ -289,6 +300,7 @@ impl<'a> SecondPassLexer<'a> {
         self.add_token(TokenKind::Identifier(self.accumulate_words()));
     }
 
+    /// Defines the behavior of regular user-identifiers, i.e. ingredient names.
     #[rustfmt::skip]
     fn identifier(&mut self) {
         while let Some(st @ SubToken { kind: SubTokenKind::Word(_), .. }) = self.peek() {
@@ -306,6 +318,8 @@ impl<'a> SecondPassLexer<'a> {
         self.add_token(TokenKind::Identifier(self.accumulate_words()));
     }
 
+    /// Defines the behavior of title identifiers and includes code to ignore
+    /// the following comments.
     #[rustfmt::skip]
     fn title(&mut self) {
         self.stage = Stage::AfterTitle;
@@ -366,6 +380,7 @@ impl<'a> SecondPassLexer<'a> {
         }
     }
 
+    /// Advances the subtoken `iterator` , returning the consumed subtoken.
     fn advance(&mut self) -> SubToken<'a> {
         let st = self.subtokens[self.current];
         self.current += 1;
@@ -373,10 +388,13 @@ impl<'a> SecondPassLexer<'a> {
         st
     }
 
+    /// Returns the next subtoken to be consumed.
     fn peek(&self) -> Option<SubToken<'a>> {
         self.peek_nth(0)
     }
 
+    /// Returns the nth subtoken to be consumed after the current one.
+    /// peek_nth(0) is equivalent to peek().
     fn peek_nth(&self, n: usize) -> Option<SubToken<'a>> {
         if self.current + n >= self.subtokens.len() {
             None
@@ -385,6 +403,7 @@ impl<'a> SecondPassLexer<'a> {
         }
     }
 
+    /// Shortcut for adding a token which automatically encodes line information.
     fn add_token(&mut self, kind: TokenKind) {
         self.tokens.push(Token {
             kind,
@@ -392,16 +411,21 @@ impl<'a> SecondPassLexer<'a> {
         })
     }
 
+    /// Shortcut for reporting an invalid character error, which also sets the
+    /// self.errored flag.
     fn invalid_char(&mut self, c: char) {
         crate::report_error(self.line, "syntax ", format!("invalid character: '{}'", c));
         self.errored = true;
     }
 
+    /// Returns whether we've reached the end of the subtoken list.
     fn is_at_end(&self) -> bool {
         self.current >= self.subtokens.len()
     }
 }
 
+/// Determines whether or not the given subtoken matches a single-word keyword,
+/// and returns that keyword in case it does.
 fn matches_single_keyword(st: &SubToken) -> Option<TokenKind> {
     if let SubTokenKind::Word(w) = st.kind {
         SINGLE_KEYWORDS.get(w).cloned()
@@ -410,6 +434,8 @@ fn matches_single_keyword(st: &SubToken) -> Option<TokenKind> {
     }
 }
 
+/// Determines whether or not the given subtokens match a double-word keyword,
+/// and returns that keyword in case they do.
 fn matches_double_keyword(st1: &SubToken, st2: &SubToken) -> Option<TokenKind> {
     if_chain! {
         if let SubTokenKind::Word(w1) = st1.kind;

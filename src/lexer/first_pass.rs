@@ -15,6 +15,12 @@ pub enum SubTokenKind<'a> {
     InvalidChar(char),
 }
 
+/// Processes the source file into a vector of subtokens.
+/// Subtokens are as they sound - not quite tokens yet, due to
+/// not having been through conditional keyword resolution.
+/// The token resolution process in the second pass also gets
+/// rid of the Comments section after a recipe title, which
+/// might include invalid tokens.
 pub fn process(source: &str) -> Vec<SubToken> {
     FirstPassLexer::new(source).process()
 }
@@ -29,10 +35,15 @@ struct FirstPassLexer<'a> {
     subtokens: Vec<SubToken<'a>>,
 }
 
+/// Determines whether a given char is valid whitespace in the
+/// eyes of the interpreter. This is a very limited subset of
+/// possible whitespace.
 fn is_whitespace(c: char) -> bool {
     c == ' ' || c == '\r' || c == '\n'
 }
 
+/// The purpose of this function is to have a single place that
+/// is able to change the behavior of identifier resolution.
 fn is_identifier_char(c: char) -> bool {
     c.is_alphanumeric()
 }
@@ -49,6 +60,8 @@ impl<'a> FirstPassLexer<'a> {
         }
     }
 
+    /// Processes every char in the source text, and returns the resulting
+    /// stream of subtokens.
     fn process(mut self) -> Vec<SubToken<'a>> {
         while !self.is_at_end() {
             self.start = self.current;
@@ -59,6 +72,9 @@ impl<'a> FirstPassLexer<'a> {
         self.subtokens
     }
 
+    /// Processes the next batch of subtokens. This might not be a single
+    /// subtoken since some subtokens are processed at the same time,
+    /// such as newlines and blanklines.
     fn scan_subtoken(&mut self) {
         let ch = self.advance();
 
@@ -88,6 +104,8 @@ impl<'a> FirstPassLexer<'a> {
         }
     }
 
+    /// Determines behavior in case of a newline. This might be
+    /// necessary when multiple newlines come one after another.
     fn newline(&mut self) {
         let mut count = 1;
         while let Some(ch) = self.peek() {
@@ -111,6 +129,7 @@ impl<'a> FirstPassLexer<'a> {
         }
     }
 
+    /// Processes a single identifier.
     fn identifier(&mut self) {
         while let Some(ch) = self.peek() {
             if !is_identifier_char(ch) {
@@ -123,6 +142,9 @@ impl<'a> FirstPassLexer<'a> {
         self.add_subtoken(SubTokenKind::Word(s));
     }
 
+    /// Returns the current range of the source text - that is, the range
+    /// beginning at the start of the char at `start` and ending right before
+    /// the char at `current`.
     fn current_range(&self) -> (usize, usize) {
         let start = self.indices[self.start].0;
         let end = self.indices[self.current.min(self.indices.len() - 1)].0;
@@ -130,11 +152,14 @@ impl<'a> FirstPassLexer<'a> {
         (start, end)
     }
 
+    /// Uses self.current_range to produce a substring of the source text.
     fn current_substring(&self) -> &'a str {
         let (start, end) = self.current_range();
         &self.source[start..end]
     }
 
+    /// Shortcut for adding a token, which automatically encodes
+    /// line information.
     fn add_subtoken(&mut self, kind: SubTokenKind<'a>) {
         self.subtokens.push(SubToken {
             kind,
@@ -142,12 +167,17 @@ impl<'a> FirstPassLexer<'a> {
         })
     }
 
+    /// Advances the char 'iterator' by 1 char, returning the char
+    /// that was consumed. Note that this function doesn't check
+    /// for reaching EOF, since it's not necessary.
     fn advance(&mut self) -> char {
         let ch = self.indices[self.current].1;
         self.current += 1;
         ch
     }
 
+    /// Returns what char would have been returned by self.advance,
+    /// but doesn't consume it.
     fn peek(&self) -> Option<char> {
         if self.is_at_end() {
             None
@@ -156,6 +186,7 @@ impl<'a> FirstPassLexer<'a> {
         }
     }
 
+    /// Checks if the next char to be consumed matches a user-given condition.
     fn peek_match(&self, f: impl FnOnce(char) -> bool) -> bool {
         match self.peek() {
             Some(ch) => f(ch),
@@ -163,6 +194,7 @@ impl<'a> FirstPassLexer<'a> {
         }
     }
 
+    /// Determines whether all of the chars have been consumed.
     fn is_at_end(&self) -> bool {
         self.current >= self.indices.len()
     }
