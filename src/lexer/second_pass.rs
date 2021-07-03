@@ -23,7 +23,7 @@ pub enum TokenKind {
     AmbiguousMeasure, MeasureType,
 
     // Method keywords,
-    Take, FromRefrigerator, Put, Into, MixingBowl, Fold,
+    Take, From, Refrigerator, Put, Into, MixingBowl, Fold,
     Add, To, Remove, Combine, Divide, DryIngredients,
     Liquefy, ContentsOf, The, Stir, For, Minutes, Mix,
     Well, Clean, Pour, BakingDish, Until, SetAside,
@@ -492,6 +492,8 @@ static SINGLE_KEYWORDS: Map<&'static str, TokenKind> = {
         "Refrigerate" => Refrigerate,
         "hours" => Hours,
         "Serves" => Serves,
+        "from" => From,
+        "refrigerator" => Refrigerator,
     }
 };
 
@@ -501,7 +503,6 @@ lazy_static! {
 
         let mut m = HashMap::with_capacity(7 * 2);
 
-        m.insert(("from", "refrigerator"), FromRefrigerator);
         m.insert(("mixing", "bowl"), MixingBowl);
         m.insert(("dry", "ingredients"), DryIngredients);
         m.insert(("contents", "of"), ContentsOf);
