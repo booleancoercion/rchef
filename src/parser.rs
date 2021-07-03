@@ -122,6 +122,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         let ingredients = match self.advance() {
             Some(t) if t.kind == Ingredients => {
                 let ingredients = self.parse_ingredients()?;
+                self.expect(Method)?;
 
                 Some(ingredients)
             }
@@ -136,7 +137,6 @@ impl<T: Iterator<Item = Token>> Parser<T> {
             }
         };
 
-        self.expect(Method)?;
         let method = self.parse_method()?;
 
         let serves = match self.advance() {
@@ -146,12 +146,13 @@ impl<T: Iterator<Item = Token>> Parser<T> {
 
                 Some(n)
             }
-            Some(t) if t.kind == BlankLine || t.kind == Eof => None,
-            t => {
+            Some(t) if t.kind == BlankLine || t.kind == Eof || t.kind == NewLine => None,
+            None => None,
+            Some(t) => {
                 crate::report_error(
                     self.line,
                     "syntax ",
-                    format!("expected SERVES or BLANKLINE or EOF, found {:?}", t),
+                    format!("expected SERVES or BLANKLINE or EOF, found {:?}", t.kind),
                 );
                 return Err(RChefError::Parse);
             }
