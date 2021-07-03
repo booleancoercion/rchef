@@ -25,8 +25,10 @@ pub fn run(filename: &str) -> Result<()> {
     let source = fs::read_to_string(filename)?;
 
     let tokens = lexer::process(&source)?;
+    println!("{:?}", tokens);
 
     let recipes = parser::process(tokens)?;
+    println!("{:?}", recipes);
 
     Ok(())
 }

@@ -23,4 +23,8 @@ If you'd like to include these details, please put them in the optional "Comment
 While this may be a difference from other interpreters, note that the language specification states that ingredient names
 must be "anything reasonable", and so this interpretation is valid.
 
+- It appears the specification lists several statement grammars incorrectly - bowls are always supposed to be referred to with a preceding 'the'.
+This is apparent in the 'Hello World Souffle' example program, where a 'Put' statement is used with the word 'the'. It also makes more sense in english.  
+As such, i've elected to assume *every ordinal identifier behaves this way*.
+
 TODO
