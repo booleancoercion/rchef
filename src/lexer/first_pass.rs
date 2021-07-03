@@ -121,11 +121,13 @@ impl<'a> FirstPassLexer<'a> {
 
         if count == 1 {
             self.add_subtoken(SubTokenKind::NewLine);
+            self.line += 1;
         } else {
             for _ in 0..count - 1 {
                 self.line += 1;
                 self.add_subtoken(SubTokenKind::BlankLine);
             }
+            self.line += 1;
         }
     }
 
