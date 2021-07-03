@@ -402,51 +402,65 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         self.expect(The)?;
         let ing1 = self.expect_ident()?;
         self.expect_fs()?;
+        self.parse_loop_after_opening(verb, ing1)
+    }
 
+    fn parse_loop_after_opening(&mut self, verb: String, ing1: String) -> Result<Stmt> {
         let first_line = self.line;
         let mut stmts = vec![];
         let mut error = false;
 
-        let ing2;
+        let mut ing2;
         while let Some(token) = self.advance() {
             if token.kind == NewLine {
                 continue;
             } else if token.kind == BlankLine || token.kind == Eof {
                 self.error("unexpected EOL or blank line")?;
-            } else if let Identifier(_) = token.kind {
+            } else if let Identifier(word) = token.kind {
                 ing2 = if let Some(The) = self.peek() {
                     self.advance();
                     Some(self.expect_ident()?)
                 } else {
                     None
                 };
-                self.expect(Until)?;
-                let verb2 = self.expect_ident()?;
 
-                if !correct_verbination(&verb, &verb2) {
-                    crate::report_error(
-                        first_line,
-                        "syntax ",
-                        format!("incorrect loop counterpart on line {}", self.line),
-                    );
-                    error = true;
+                match self.advexp()?.kind {
+                    Until => {
+                        let verb2 = self.expect_ident()?;
+
+                        if !correct_verbination(&verb, &verb2) {
+                            crate::report_error(
+                                first_line,
+                                "syntax ",
+                                format!("incorrect loop counterpart on line {}", self.line + 1),
+                            );
+                            error = true;
+                        }
+
+                        if error {
+                            return Err(RChefError::Parse);
+                        } else {
+                            return Ok(Stmt {
+                                kind: StmtKind::Loop {
+                                    igdt1: ing1,
+                                    igdt2: ing2,
+                                    stmts,
+                                },
+                                line: first_line,
+                            });
+                        }
+                    }
+                    FullStop => {
+                        if let Some(ing) = ing2 {
+                            stmts.push(self.parse_loop_after_opening(word, ing)?);
+                            self.expect_fs()?;
+                        } else {
+                            return self.error("expected THE, IDENTIFIER before FULLSTOP");
+                        }
+                    }
+                    k => return self.error(format!("expected UNTIL or FULLSTOP, found {:?}", k)),
                 }
-
-                if error {
-                    return Err(RChefError::Parse);
-                } else {
-                    return Ok(Stmt {
-                        kind: StmtKind::Loop {
-                            igdt1: ing1,
-                            igdt2: ing2,
-                            stmts,
-                        },
-                        line: first_line,
-                    });
-                }
-            }
-
-            if let Ok(stmt) = self.parse_stmt(token) {
+            } else if let Ok(stmt) = self.parse_stmt(token) {
                 stmts.push(stmt);
             } else {
                 error = true;
@@ -640,7 +654,11 @@ impl<T: Iterator<Item = Token>> Parser<T> {
 }
 
 fn correct_verbination(verb1: &str, verb2: &str) -> bool {
-    verb2.ends_with("ed") && verb1.to_lowercase() == verb2[..verb2.len() - 3].to_lowercase()
+    if verb1.ends_with('e') {
+        verb2.ends_with('d') && verb1.to_lowercase() == verb2[..verb2.len() - 1].to_lowercase()
+    } else {
+        verb2.ends_with("ed") && verb1.to_lowercase() == verb2[..verb2.len() - 2].to_lowercase()
+    }
 }
 
 fn token_name(kind: &TokenKind) -> &'static str {
