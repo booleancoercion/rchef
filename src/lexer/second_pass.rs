@@ -241,7 +241,7 @@ impl<'a> SecondPassLexer<'a> {
                         then {
                             let serve_with = x == TokenKind::ServeWith;
 
-                            self.advance(); // consume the second token
+                            self.advance(); // consume the second subtoken
                             self.add_token(x);
 
                             if serve_with {
@@ -287,6 +287,7 @@ impl<'a> SecondPassLexer<'a> {
     /// `Serve with ...` statement. This is necessary to correctly
     /// parse title identifiers.
     fn serve_with(&mut self) {
+        self.start = self.current;
         while let Some(SubToken {
             kind: SubTokenKind::Word(_),
             ..

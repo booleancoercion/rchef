@@ -375,7 +375,6 @@ impl<T: Iterator<Item = Token>> Parser<T> {
             }
             ServeWith => {
                 let recipe = self.expect_ident()?;
-                self.expect_fs()?;
                 self.stmt(StmtKind::ServeWith(recipe))
             }
             Refrigerate => {
