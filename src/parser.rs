@@ -220,8 +220,8 @@ impl<T: Iterator<Item = Token>> Parser<T> {
 
         Ok(Ingredient {
             name,
-            initial_value,
             measure,
+            initial_value,
         })
     }
 
