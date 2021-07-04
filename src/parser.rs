@@ -449,7 +449,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
             } else if token.kind == BlankLine || token.kind == Eof {
                 self.error("unexpected EOL or blank line")?;
             } else if token.kind == SetAside {
-                self.stmt(StmtKind::SetAside);
+                stmts.push(self.stmt(StmtKind::SetAside));
                 if self.expect_fs().is_err() {
                     error = true;
                 }
