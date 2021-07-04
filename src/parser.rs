@@ -134,7 +134,10 @@ impl<T: Iterator<Item = Token>> Parser<T> {
                 crate::report_error(
                     self.line,
                     "syntax ",
-                    format!("expected INGREDIENTS or METHOD, found {:?}", t),
+                    format!(
+                        "expected INGREDIENTS or METHOD, found {}",
+                        token_name_opt(t)
+                    ),
                 );
                 return Err(RChefError::Parse);
             }
@@ -155,7 +158,10 @@ impl<T: Iterator<Item = Token>> Parser<T> {
                 crate::report_error(
                     self.line,
                     "syntax ",
-                    format!("expected SERVES or BLANKLINE or EOF, found {:?}", t.kind),
+                    format!(
+                        "expected SERVES or BLANKLINE or EOF, found {}",
+                        token_name(t.kind)
+                    ),
                 );
                 return Err(RChefError::Parse);
             }
@@ -182,7 +188,10 @@ impl<T: Iterator<Item = Token>> Parser<T> {
                 NewLine => ingredients.push(self.parse_ingredient()?),
                 BlankLine => return Ok(ingredients),
                 k => {
-                    return self.error(format!("expected NEWLINE or BLANKLINE, found {:?}", k));
+                    return self.error(format!(
+                        "expected NEWLINE or BLANKLINE, found {}",
+                        token_name(k)
+                    ));
                 }
             }
         }
@@ -294,8 +303,8 @@ impl<T: Iterator<Item = Token>> Parser<T> {
                     self.stmt(StmtKind::AddDry(bowl))
                 }
                 k => self.error(format!(
-                    "expected IDENTIFIER or DRYINGREDIENTS, found {:?}",
-                    k
+                    "expected IDENTIFIER or DRYINGREDIENTS, found {}",
+                    token_name(k)
                 ))?,
             },
             Remove => {
@@ -322,7 +331,10 @@ impl<T: Iterator<Item = Token>> Parser<T> {
 
                     self.stmt(StmtKind::LiquefyConts(bowl))
                 }
-                k => self.error(format!("expected IDENTIFIER or CONTENTSOF, found {:?}", k))?,
+                k => self.error(format!(
+                    "expected IDENTIFIER or CONTENTSOF, found {}",
+                    token_name(k)
+                ))?,
             },
             Stir => match self.advexp()?.kind {
                 The => {
@@ -354,7 +366,10 @@ impl<T: Iterator<Item = Token>> Parser<T> {
 
                     self.stmt(StmtKind::StirInto(IgdtBowl(ing, bowl)))
                 }
-                k => self.error(format!("expected IDENTIFIER or THE or FOR, found {:?}", k))?,
+                k => self.error(format!(
+                    "expected IDENTIFIER or THE or FOR, found {}",
+                    token_name(k)
+                ))?,
             },
             Mix => {
                 let bowl = self.opt_word_mxbowl(The)?;
@@ -398,7 +413,10 @@ impl<T: Iterator<Item = Token>> Parser<T> {
 
                 self.stmt(StmtKind::Refrigerate(num))
             }
-            kind => self.error(format!("expected method keyword, found {:?}", kind))?,
+            kind => self.error(format!(
+                "expected method keyword, found {}",
+                token_name(kind)
+            ))?,
         };
         self.expect_fs()?;
 
@@ -479,7 +497,12 @@ impl<T: Iterator<Item = Token>> Parser<T> {
                             return self.error("expected THE, IDENTIFIER before FULLSTOP");
                         }
                     }
-                    k => return self.error(format!("expected UNTIL or FULLSTOP, found {:?}", k)),
+                    k => {
+                        return self.error(format!(
+                            "expected UNTIL or FULLSTOP, found {}",
+                            token_name(k)
+                        ))
+                    }
                 }
             } else if let Ok(stmt) = self.parse_stmt(token) {
                 stmts.push(stmt);
@@ -534,7 +557,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         if let Some(Token { kind: Identifier(ident), .. }) = t {
             Ok(ident)
         } else {
-            return self.error(format!("expected IDENTIFIER, found {:?}", t));
+            return self.error(format!("expected IDENTIFIER, found {}", token_name_opt(t)));
         }
     }
 
@@ -546,7 +569,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         if let Some(Token { kind: Number(n), .. }) = t {
             Ok(n)
         } else {
-            return self.error(format!("expected NUMBER, found {:?}", t));
+            return self.error(format!("expected NUMBER, found {}", token_name_opt(t)));
         }
     }
 
@@ -605,19 +628,19 @@ impl<T: Iterator<Item = Token>> Parser<T> {
     /// Expects the given TokenKind. This is supposed to be used with a token kind
     /// that doesn't store any additional information, like Ingredients and unlike Identifier(String)
     fn expect(&mut self, kind: TokenKind) -> Result<Token> {
-        if let Some(t) = self.advance() {
+        let t = self.advance();
+        let s;
+        if let Some(t) = t {
             if t.kind == kind {
-                Ok(t)
+                return Ok(t);
             } else {
-                self.error(format!(
-                    "expected {}, found {:?}",
-                    token_name(&kind),
-                    t.kind
-                ))
+                s = token_name(t.kind);
             }
         } else {
-            self.error(format!("expected {}", token_name(&kind)))
+            s = token_name_opt(t);
         }
+
+        self.error(format!("expected {}, found {}", token_name(kind), s))
     }
 
     /// Expects all the TokenKinds in the given array, in that order.
@@ -711,7 +734,7 @@ fn correct_verbination(verb1: &str, verb2: &str) -> bool {
 }
 
 /// Translates a given TokenKind into its textual name.
-fn token_name(kind: &TokenKind) -> &'static str {
+fn token_name(kind: TokenKind) -> &'static str {
     match kind {
         Identifier(_) => "IDENTIFIER",
         Ordinal(_) => "ORDINAL",
@@ -756,5 +779,15 @@ fn token_name(kind: &TokenKind) -> &'static str {
         NewLine => "NEWLINE",
         BlankLine => "BLANKLINE",
         FullStop => "FULLSTOP",
+    }
+}
+
+/// Translates a Token into its textual name, taking into account it might be
+/// None and interprets that as EOF.
+fn token_name_opt(token: Option<Token>) -> &'static str {
+    if let Some(token) = token {
+        token_name(token.kind)
+    } else {
+        "None"
     }
 }
