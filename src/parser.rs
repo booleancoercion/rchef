@@ -87,6 +87,8 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         }
     }
 
+    /// Processes an entire chef file, and outputs the contained recipes.
+    /// Returns an error when at least one recipe failed to parse correctly.
     fn process(mut self) -> Result<Vec<Recipe>> {
         let mut recipes = vec![];
 
@@ -112,6 +114,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         }
     }
 
+    /// Parses a single recipe starting where the iterator is currently.
     fn parse_recipe(&mut self) -> Result<Recipe> {
         self.eat_blanklines();
 
@@ -166,6 +169,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         })
     }
 
+    /// Parses the ingredients section of a recipe, minus the "Ingredients" keyword.
     fn parse_ingredients(&mut self) -> Result<Vec<Ingredient>> {
         self.expect_fs()?;
         let mut ingredients = vec![];
@@ -186,6 +190,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         self.error("unexpected EOF")
     }
 
+    /// Parses a single ingredient in an Ingredients section.
     fn parse_ingredient(&mut self) -> Result<Ingredient> {
         let initial_value = if let Some(Number(n)) = self.peek() {
             let n = *n;
@@ -225,6 +230,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         })
     }
 
+    /// Parses the Method section of a recipe, minus the "Method" keyword.
     fn parse_method(&mut self) -> Result<Vec<Stmt>> {
         self.expect_fs_nl()?;
 
@@ -253,6 +259,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         }
     }
 
+    /// Parses a single statement in the Method section of a recipe.
     fn parse_stmt(&mut self, token: Token) -> Result<Stmt> {
         // the terminal fullstop is expected at the end!
         let res = match token.kind {
@@ -398,6 +405,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         Ok(res)
     }
 
+    /// Parses a "Verb ... until verbed" loop statement, minus the initial verb identifier.
     fn parse_loop(&mut self, verb: String) -> Result<Stmt> {
         self.expect(The)?;
         let ing1 = self.expect_ident()?;
@@ -405,18 +413,27 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         self.parse_loop_after_opening(verb, ing1)
     }
 
+    /// The second part of the loop parsing function, which takes in the already parsed
+    /// ingredient and verb. The purpose of this function is to correctly, recursively
+    /// parse nested loops, as their beginnings would already be consumed here due to
+    /// ambiguity.
     fn parse_loop_after_opening(&mut self, verb: String, ing1: String) -> Result<Stmt> {
         let first_line = self.line;
         let mut stmts = vec![];
         let mut error = false;
 
         let mut ing2;
+        // Keep parsing statements, until we encounter the end of the current loop.
         while let Some(token) = self.advance() {
             if token.kind == NewLine {
                 continue;
             } else if token.kind == BlankLine || token.kind == Eof {
                 self.error("unexpected EOL or blank line")?;
             } else if let Identifier(word) = token.kind {
+                // the 'the' is optional at the end of a loop,
+                // but required at the start of a new loop.
+                // this is checked when we're sure that we started
+                // a new loop
                 ing2 = if let Some(The) = self.peek() {
                     self.advance();
                     Some(self.expect_ident()?)
@@ -426,6 +443,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
 
                 match self.advexp()?.kind {
                     Until => {
+                        // The end of the loop we're currently parsing
                         let verb2 = self.expect_ident()?;
 
                         if !correct_verbination(&verb, &verb2) {
@@ -451,8 +469,11 @@ impl<T: Iterator<Item = Token>> Parser<T> {
                         }
                     }
                     FullStop => {
+                        // The case where we encounter the start of a new loop
                         if let Some(ing) = ing2 {
                             stmts.push(self.parse_loop_after_opening(word, ing)?);
+                            // the following is necessary because the expect_fs call would usually occur
+                            // after the match in the parse_stmt function
                             self.expect_fs()?;
                         } else {
                             return self.error("expected THE, IDENTIFIER before FULLSTOP");
@@ -471,6 +492,8 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         Err(RChefError::Parse)
     }
 
+    /// Parses an optional ordinal identifier, that is, returns
+    /// None where there isn't an ordinal identifier to parse.
     fn opt_ordinal(&mut self) -> BowlNo {
         if let Some(Ordinal(n)) = self.peek() {
             let n = *n;
@@ -481,6 +504,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         }
     }
 
+    /// Parses an optional section of code of the form '[<TOKEN> the [nth] mixing bowl]'
     fn opt_word_mxbowl(&mut self, kind: TokenKind) -> Result<BowlNo> {
         Ok(if self.matches(|k| *k == kind) {
             self.advance();
@@ -494,6 +518,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         })
     }
 
+    /// Shortcut for creating a statement with the current line information.
     fn stmt(&self, kind: StmtKind) -> Stmt {
         Stmt {
             line: self.line,
@@ -501,6 +526,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         }
     }
 
+    /// Expects an identifier and returns the string inside, if applicable.
     #[rustfmt::skip]
     fn expect_ident(&mut self) -> Result<String> {
         let t = self.advance();
@@ -512,6 +538,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         }
     }
 
+    /// Expects a Number and returns the i64 inside, if applicable.
     #[rustfmt::skip]
     fn expect_number(&mut self) -> Result<i64> {
         let t = self.advance();
@@ -523,6 +550,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         }
     }
 
+    /// Expects a valid nonzero u32, as in a Number between 1 and u32::MAX
     fn expect_nonzero_u32(&mut self) -> Result<NonZeroU32> {
         let num = if let Ok(n) = self.expect_number()?.try_into() {
             n
@@ -537,6 +565,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         }
     }
 
+    /// Expects a FullStop and then a NewLine
     fn expect_fs_nl(&mut self) -> Result<()> {
         self.expect_fs()?;
         self.expect_nl()?;
@@ -544,12 +573,14 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         Ok(())
     }
 
+    /// Expects a NewLine
     fn expect_nl(&mut self) -> Result<()> {
         self.expect(NewLine)?;
 
         Ok(())
     }
 
+    /// Expects a FullStop and then a BlankLine
     fn expect_fs_bl(&mut self) -> Result<()> {
         self.expect_fs()?;
         self.expect_bl()?;
@@ -557,18 +588,22 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         Ok(())
     }
 
+    /// Expects a FullStop
     fn expect_fs(&mut self) -> Result<()> {
         self.expect(FullStop)?;
 
         Ok(())
     }
 
+    /// Expects a BlankLine
     fn expect_bl(&mut self) -> Result<()> {
         self.expect(BlankLine)?;
 
         Ok(())
     }
 
+    /// Expects the given TokenKind. This is supposed to be used with a token kind
+    /// that doesn't store any additional information, like Ingredients and unlike Identifier(String)
     fn expect(&mut self, kind: TokenKind) -> Result<Token> {
         if let Some(t) = self.advance() {
             if t.kind == kind {
@@ -585,6 +620,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         }
     }
 
+    /// Expects all the TokenKinds in the given array, in that order.
     fn expect_multiple<const N: usize>(&mut self, kinds: [TokenKind; N]) -> Result<()> {
         let kinds = IntoIter::new(kinds);
 
@@ -595,24 +631,30 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         Ok(())
     }
 
+    /// Shortcut for reporting a returning an error. All reported errors use the current line
+    /// and are syntax errors.
     fn error<S, D: std::fmt::Display>(&self, msg: D) -> Result<S> {
         crate::report_error(self.line, "syntax ", msg);
         Err(RChefError::Parse)
     }
 
+    /// Consumes BlankLine tokens until something else is encountered.
     fn eat_blanklines(&mut self) {
         while self.matches(|k| *k == BlankLine) {
             self.advance();
         }
     }
 
+    /// Consumes every possible token until a FullStop is encountered, and then consumes that too.
     fn eat_upto_fullstop(&mut self) {
-        while !self.matches(|k| *k == FullStop) {
+        while !self.matches(|k| *k == FullStop) && !self.is_at_end() {
             self.advance();
         }
         self.advance();
     }
 
+    /// Advances the iterator and returns the token that was returned, if there is any.
+    /// This function also updates the self.line field.
     fn advance(&mut self) -> Option<Token> {
         let t = self.tokens.next();
         if let Some(t) = &t {
@@ -622,6 +664,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         t
     }
 
+    /// Advances the iterator, and expects there to be a token (and not None).
     fn advexp(&mut self) -> Result<Token> {
         if let Some(t) = self.advance() {
             Ok(t)
@@ -630,10 +673,13 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         }
     }
 
+    /// Peeks the token iterator.
     fn peek(&mut self) -> Option<&TokenKind> {
         self.tokens.peek().map(|t| &t.kind)
     }
 
+    /// Returns false if there is no token to peek at, and otherwise
+    /// checks the given function and returns the value given by it.
     fn matches(&mut self, f: impl FnOnce(&TokenKind) -> bool) -> bool {
         if let Some(t) = self.tokens.peek() {
             f(&t.kind)
@@ -642,6 +688,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         }
     }
 
+    /// Checks if we've reached the end of the iterator or the file.
     fn is_at_end(&mut self) -> bool {
         let t = self.tokens.peek();
 
@@ -653,6 +700,8 @@ impl<T: Iterator<Item = Token>> Parser<T> {
     }
 }
 
+/// Checks if the verbs in the given strings match: verb2 essentially needs to be verb1 + "ed",
+/// with special cases considered.
 fn correct_verbination(verb1: &str, verb2: &str) -> bool {
     if verb1.ends_with('e') {
         verb2.ends_with('d') && verb1.to_lowercase() == verb2[..verb2.len() - 1].to_lowercase()
@@ -661,6 +710,7 @@ fn correct_verbination(verb1: &str, verb2: &str) -> bool {
     }
 }
 
+/// Translates a given TokenKind into its textual name.
 fn token_name(kind: &TokenKind) -> &'static str {
     match kind {
         Identifier(_) => "IDENTIFIER",
