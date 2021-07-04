@@ -29,13 +29,13 @@ pub enum Measure {
     Ambiguous,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub line: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StmtKind {
     Take(String),
     Put(IgdtBowl),
@@ -47,7 +47,7 @@ pub enum StmtKind {
     AddDry(BowlNo),
     Liquefy(String),
     LiquefyConts(BowlNo),
-    Stir(BowlNo, u32),
+    Stir(BowlNo, usize),
     StirInto(IgdtBowl),
     Mix(BowlNo),
     Clean(BowlNo),
@@ -67,7 +67,7 @@ pub type BowlNo = Option<NonZeroU32>;
 
 /// Shortcut for a (IngredientName, MixingBowlNumber) type,
 /// heavily used in arithmetic statements.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IgdtBowl(pub String, pub BowlNo);
 
 pub fn process(tokens: Vec<Token>) -> Result<Vec<Recipe>> {
@@ -341,7 +341,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
                     let bowl = self.opt_ordinal();
                     self.expect(MixingBowl)?;
                     self.expect(For)?;
-                    let num: u32 = if let Ok(n) = self.expect_number()?.try_into() {
+                    let num: usize = if let Ok(n) = self.expect_number()?.try_into() {
                         n
                     } else {
                         self.error("number literal is either negative or too big")?
@@ -351,7 +351,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
                     self.stmt(StmtKind::Stir(bowl, num))
                 }
                 For => {
-                    let num: u32 = if let Ok(n) = self.expect_number()?.try_into() {
+                    let num: usize = if let Ok(n) = self.expect_number()?.try_into() {
                         n
                     } else {
                         self.error("number literal is either negative or too big")?
@@ -393,8 +393,9 @@ impl<T: Iterator<Item = Token>> Parser<T> {
             }
             Identifier(verb) => self.parse_loop(verb)?,
             SetAside => {
-                self.expect_fs()?;
-                self.stmt(StmtKind::SetAside)
+                // if we reached this here, it means that it didn't get parsed as part of a loop.
+                // this is an error, because it serves the same purpose as "break;".
+                return self.error("encountered SETASIDE outside of a loop body");
             }
             ServeWith => {
                 let recipe = self.expect_ident()?;
@@ -447,6 +448,11 @@ impl<T: Iterator<Item = Token>> Parser<T> {
                 continue;
             } else if token.kind == BlankLine || token.kind == Eof {
                 self.error("unexpected EOL or blank line")?;
+            } else if token.kind == SetAside {
+                self.stmt(StmtKind::SetAside);
+                if self.expect_fs().is_err() {
+                    error = true;
+                }
             } else if let Identifier(word) = token.kind {
                 // the 'the' is optional at the end of a loop,
                 // but required at the start of a new loop.

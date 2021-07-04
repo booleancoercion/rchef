@@ -2,8 +2,11 @@ use crate::parser::{IgdtBowl, Measure, Recipe, Stmt, StmtKind};
 use crate::{RChefError, Result};
 
 use if_chain::if_chain;
+use rand::prelude::SliceRandom;
 
 use std::collections::HashMap;
+use std::convert::TryFrom;
+use std::convert::TryInto;
 use std::io;
 use std::num::NonZeroU32;
 
@@ -24,10 +27,10 @@ impl Interpreter {
             return Err(RChefError::Runtime);
         }
 
-        let main = recipes[0].title.clone();
+        let main = recipes[0].title.to_lowercase();
         let recipes = recipes
             .into_iter()
-            .map(|rec| (rec.title.clone(), rec))
+            .map(|rec| (rec.title.to_lowercase(), rec))
             .collect();
 
         Ok(Self { recipes, main })
@@ -51,6 +54,7 @@ struct RecipeRunner<'a> {
     only_first_bowl: bool,
     only_first_dish: bool,
     line: u32,
+    refrigerated: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -84,6 +88,54 @@ impl ValueStack {
     fn peek(&self) -> Option<Value> {
         self.values.last().copied()
     }
+
+    fn stir(&mut self, n: usize) {
+        if n == 0 {
+            return;
+        }
+
+        let len = self.values.len();
+        let n = n.min(len - 1);
+
+        self.values[len - 1 - n..].rotate_right(1);
+    }
+
+    fn mix(&mut self) {
+        let mut rng = rand::thread_rng();
+        self.values.shuffle(&mut rng);
+    }
+
+    fn clean(&mut self) {
+        self.values.clear();
+    }
+
+    fn pour_into(&self, other: &mut ValueStack) {
+        other.values.extend_from_slice(&self.values[..]);
+    }
+
+    fn printable(&self) -> String {
+        let mut buffer = String::new();
+
+        for &val in self.values.iter().rev() {
+            match val.measure {
+                Measure::Ambiguous => buffer.push(char::REPLACEMENT_CHARACTER),
+                Measure::Dry => buffer.push_str(&val.num.to_string()),
+                Measure::Liquid => {
+                    if_chain! {
+                        if let Ok(num) = u32::try_from(val.num);
+                        if let Some(ch) = char::from_u32(num);
+                        then {
+                            buffer.push(ch);
+                        } else {
+                            buffer.push(char::REPLACEMENT_CHARACTER);
+                        }
+                    }
+                }
+            }
+        }
+
+        buffer
+    }
 }
 
 impl<'a> RecipeRunner<'a> {
@@ -111,15 +163,18 @@ impl<'a> RecipeRunner<'a> {
             only_first_bowl: true,
             only_first_dish: true,
             line: 0,
+            refrigerated: false,
         }
     }
 
-    fn with_dishes(
+    fn with_bowls_dishes(
         interpreter: &'a Interpreter,
         recipe: &'a Recipe,
+        bowls: HashMap<NonZeroU32, ValueStack>,
         dishes: HashMap<NonZeroU32, ValueStack>,
     ) -> Self {
         Self {
+            bowls,
             dishes,
             ..Self::new(interpreter, recipe)
         }
@@ -127,7 +182,17 @@ impl<'a> RecipeRunner<'a> {
 
     fn run(mut self) -> Result<Option<ValueStack>> {
         for stmt in &self.recipe.method {
+            self.line = stmt.line;
             self.execute_stmt(stmt)?;
+            if self.refrigerated {
+                break;
+            }
+        }
+
+        if !self.refrigerated {
+            if let Some(n) = self.recipe.serves {
+                self.print(n);
+            }
         }
 
         Ok(self.dishes.remove(&NonZeroU32::new(1).unwrap()))
@@ -213,31 +278,119 @@ impl<'a> RecipeRunner<'a> {
                     .iter_mut()
                     .for_each(|val| val.measure = Measure::Liquid);
             }
-            Stir(bowl, n) => {
-                if *n == 0 {
-                    return Ok(());
-                }
-                let bowl = self.get_bowl_mut(bowl)?;
-                let len = bowl.values.len();
-                let n = (*n as usize).min(len - 1);
+            Stir(bowl, n) => self.get_bowl_mut(bowl)?.stir(*n),
 
-                bowl.values[len - 1 - n..].rotate_right(1);
+            StirInto(IgdtBowl(name, bowl)) => {
+                let igdt = self.get_ingredient(name)?;
+                let n: usize = if let Ok(n) = igdt.num.try_into() {
+                    n
+                } else {
+                    return self.error(format!(
+                        "'{}'s value ({}) is too large for stirring!",
+                        name, igdt.num
+                    ));
+                };
+
+                self.get_bowl_mut(bowl)?.stir(n);
             }
-            StirInto(IgdtBowl(igdt, bowl)) => todo!(),
-            Mix(bowl) => todo!(),
-            Clean(bowl) => todo!(),
-            Pour(bowl, dish) => todo!(),
+            Mix(bowl) => self.get_bowl_mut(bowl)?.mix(),
+
+            Clean(bowl) => self.get_bowl_mut(bowl)?.clean(),
+            Pour(bowl, dish) => {
+                let bowlkey =
+                    Self::bowldish_key_helper(self.line, "bowl", bowl, &mut self.only_first_bowl)?;
+                let bowl = if let Some(bowl) = self.bowls.get(&bowlkey) {
+                    bowl
+                } else {
+                    return Ok(());
+                };
+
+                let dish = Self::get_bowl_or_dish_mut(
+                    self.line,
+                    &mut self.dishes,
+                    "dish",
+                    dish,
+                    &mut self.only_first_dish,
+                )?;
+
+                bowl.pour_into(dish);
+            }
             Loop {
                 igdt1,
                 igdt2,
                 stmts,
-            } => todo!(),
-            SetAside => todo!(),
-            ServeWith(recipe) => todo!(),
-            Refrigerate(n) => todo!(),
+            } => 'outer: loop {
+                let igdt1 = self.get_ingredient(igdt1)?;
+                if igdt1.num == 0 {
+                    break;
+                }
+
+                for stmt in stmts {
+                    if stmt.kind == StmtKind::SetAside {
+                        break 'outer;
+                    }
+                    self.execute_stmt(stmt)?;
+                }
+
+                if let Some(name) = igdt2 {
+                    let line = self.line;
+                    if let Some(igdt2) = self.get_ingredient_mut(name)? {
+                        igdt2.num -= 1;
+                    } else {
+                        Self::error_with_line(
+                            line,
+                            format!(
+                                "attempted to access ingredient '{}', but recipe has no such ingredient!",
+                                name
+                            ),
+                        );
+                        return Err(RChefError::Runtime);
+                    }
+                }
+            },
+            SetAside => unreachable!(), // this is unreachable in the way that the grammar is parsed
+            ServeWith(recipe) => {
+                let recipe =
+                    if let Some(recipe) = self.interpreter.recipes.get(&recipe.to_lowercase()) {
+                        recipe
+                    } else {
+                        return self.error(format!("couldn't find the recipe {}", recipe));
+                    };
+                let bowl = RecipeRunner::with_bowls_dishes(
+                    self.interpreter,
+                    recipe,
+                    self.bowls.clone(),
+                    self.dishes.clone(),
+                )
+                .run()?;
+
+                if let Some(outbowl) = bowl {
+                    let bowl = self.get_bowl_mut(&Some(NonZeroU32::new(1).unwrap()))?;
+                    outbowl.pour_into(bowl);
+                }
+            }
+            Refrigerate(n) => {
+                self.refrigerated = true;
+                if let Some(n) = *n {
+                    self.print(n);
+                }
+            }
         }
 
         Ok(())
+    }
+
+    fn print(&self, n: NonZeroU32) {
+        let mut buffer = String::new();
+        for i in 1..=n.get() {
+            let i = unsafe { NonZeroU32::new_unchecked(i) };
+
+            if let Some(dish) = self.dishes.get(&i) {
+                buffer.push_str(&dish.printable());
+            }
+        }
+
+        println!("{}", buffer);
     }
 
     fn arithmetic_helper(
@@ -281,16 +434,6 @@ impl<'a> RecipeRunner<'a> {
             "bowl",
             key,
             &mut self.only_first_bowl,
-        )
-    }
-
-    fn get_dish_mut(&mut self, key: &Option<NonZeroU32>) -> Result<&mut ValueStack> {
-        Self::get_bowl_or_dish_mut(
-            self.line,
-            &mut self.dishes,
-            "dish",
-            key,
-            &mut self.only_first_dish,
         )
     }
 
