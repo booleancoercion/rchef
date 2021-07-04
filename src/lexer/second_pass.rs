@@ -345,10 +345,7 @@ impl<'a> SecondPassLexer<'a> {
             should_continue = false;
         }
 
-        if let Some(SubToken { kind: SubTokenKind::BlankLine, .. }) = self.peek() {
-            self.advance();
-            self.add_token(TokenKind::BlankLine);
-        } else {
+        if !matches!(self.peek(), Some(SubToken { kind: SubTokenKind::BlankLine, .. })) {
             crate::report_error(
                 self.line,
                 "syntax ",
