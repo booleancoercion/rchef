@@ -22,7 +22,7 @@ pub struct Ingredient {
     pub initial_value: Option<i64>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Measure {
     Dry,
     Liquid,

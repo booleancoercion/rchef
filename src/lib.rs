@@ -1,3 +1,4 @@
+mod direct_interpreter;
 mod lexer;
 mod parser;
 
@@ -5,9 +6,9 @@ use thiserror::Error;
 
 use std::fs;
 use std::io;
-use std::result;
+use std::result::Result as StdResult;
 
-pub type Result<T> = result::Result<T, RChefError>;
+pub type Result<T> = StdResult<T, RChefError>;
 
 #[derive(Debug, Error)]
 pub enum RChefError {
@@ -19,6 +20,9 @@ pub enum RChefError {
 
     #[error("parse error")]
     Parse,
+
+    #[error("runtime error")]
+    Runtime,
 }
 
 pub fn run(filename: &str) -> Result<()> {
@@ -28,9 +32,9 @@ pub fn run(filename: &str) -> Result<()> {
     //println!("{:?}", tokens);
 
     let recipes = parser::process(tokens)?;
-    println!("{:?}", recipes);
+    //println!("{:?}", recipes);
 
-    Ok(())
+    direct_interpreter::run(recipes)
 }
 
 pub fn report_error<S: std::fmt::Display>(line: u32, prefix: &str, msg: S) {
