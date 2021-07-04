@@ -85,10 +85,6 @@ impl ValueStack {
         self.values.pop()
     }
 
-    fn peek(&self) -> Option<Value> {
-        self.values.last().copied()
-    }
-
     fn stir(&mut self, n: usize) {
         if n == 0 {
             return;
@@ -132,6 +128,9 @@ impl ValueStack {
                     }
                 }
             }
+
+            // for debugging purposes
+            buffer.push(',');
         }
 
         buffer
@@ -195,7 +194,7 @@ impl<'a> RecipeRunner<'a> {
             }
         }
 
-        Ok(self.dishes.remove(&NonZeroU32::new(1).unwrap()))
+        Ok(self.bowls.remove(&NonZeroU32::new(1).unwrap()))
     }
 
     fn execute_stmt(&mut self, stmt: &Stmt) -> Result<()> {
@@ -326,8 +325,16 @@ impl<'a> RecipeRunner<'a> {
                 }
 
                 for stmt in stmts {
-                    if stmt.kind == StmtKind::SetAside {
-                        break 'outer;
+                    match stmt.kind {
+                        SetAside => break 'outer,
+                        Refrigerate(n) => {
+                            self.refrigerated = true;
+                            if let Some(n) = n {
+                                self.print(n);
+                            }
+                            break 'outer;
+                        }
+                        _ => {}
                     }
                     self.execute_stmt(stmt)?;
                 }
@@ -401,7 +408,11 @@ impl<'a> RecipeRunner<'a> {
         let IgdtBowl(igdt, bowl) = igdtbowl;
 
         let igdt = self.get_ingredient(igdt)?;
-        let top = self.peek_bowl(bowl)?;
+        let top = if let Some(val) = self.get_bowl_mut(bowl)?.pop() {
+            val
+        } else {
+            return self.error("attempted to get value from bowl, but it was empty!");
+        };
         let num = f(igdt.num, top.num);
 
         let bowl = self.get_bowl_mut(bowl)?;
@@ -411,20 +422,6 @@ impl<'a> RecipeRunner<'a> {
         });
 
         Ok(())
-    }
-
-    fn peek_bowl(&mut self, key: &Option<NonZeroU32>) -> Result<Value> {
-        let key = Self::bowldish_key_helper(self.line, "bowl", key, &mut self.only_first_bowl)?;
-
-        if_chain! {
-            if let Some(stack) = self.bowls.get(&key);
-            if let Some(val) = stack.peek();
-            then {
-                Ok(val)
-            } else {
-                self.error(format!("attempted to access value in bowl {} but it was empty!", key))
-            }
-        }
     }
 
     fn get_bowl_mut(&mut self, key: &Option<NonZeroU32>) -> Result<&mut ValueStack> {
