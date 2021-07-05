@@ -102,7 +102,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
                 errored = true;
             }
 
-            while !self.matches(|k| *k == BlankLine) && !self.is_at_end() {
+            while self.matches(|k| *k == BlankLine) && !self.is_at_end() {
                 self.advance();
             }
         }
@@ -145,26 +145,15 @@ impl<T: Iterator<Item = Token>> Parser<T> {
 
         let method = self.parse_method()?;
 
-        let serves = match self.advance() {
-            Some(t) if t.kind == Serves => {
+        let serves = match self.peek() {
+            Some(Serves) => {
+                self.advance();
                 let n = self.expect_nonzero_u32()?;
                 self.expect_fs()?;
 
                 Some(n)
             }
-            Some(t) if t.kind == BlankLine || t.kind == Eof || t.kind == NewLine => None,
-            None => None,
-            Some(t) => {
-                crate::report_error(
-                    self.line,
-                    "syntax ",
-                    format!(
-                        "expected SERVES or BLANKLINE or EOF, found {}",
-                        token_name(t.kind)
-                    ),
-                );
-                return Err(RChefError::Parse);
-            }
+            _ => None,
         };
 
         Ok(Recipe {

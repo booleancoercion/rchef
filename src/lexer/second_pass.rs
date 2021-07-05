@@ -107,7 +107,11 @@ fn parse_numeric(ident: &str) -> StdResult<i64, ParseNumIdentError> {
     if ident.is_empty() || ident.chars().any(|c| !('0'..='9').contains(&c)) {
         Err(InvalidFormat)
     } else if ident.starts_with('0') {
-        Err(AlmostValidFormat)
+        if ident.len() == 1 {
+            Ok(0)
+        } else {
+            Err(AlmostValidFormat)
+        }
     } else {
         ident.parse().map_err(|_| OutOfRange)
     }
