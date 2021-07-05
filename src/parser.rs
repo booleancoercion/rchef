@@ -7,7 +7,7 @@ use std::convert::TryInto;
 use std::iter::Peekable;
 use std::num::NonZeroU32;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recipe {
     pub title: String,
     pub ingredients: Option<Vec<Ingredient>>,
@@ -15,7 +15,7 @@ pub struct Recipe {
     pub serves: Option<NonZeroU32>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ingredient {
     pub name: String,
     pub measure: Measure,

@@ -15,13 +15,13 @@ pub fn run(recipes: Vec<Recipe>) -> Result<()> {
 }
 
 #[derive(Debug)]
-struct Interpreter {
+pub struct Interpreter {
     recipes: HashMap<String, Recipe>,
     main: String,
 }
 
 impl Interpreter {
-    fn new(recipes: Vec<Recipe>) -> Result<Self> {
+    pub fn new(recipes: Vec<Recipe>) -> Result<Self> {
         if recipes.is_empty() {
             crate::report_error(0, "syntax ", "programs must contain at least one recipe");
             return Err(RChefError::Runtime);
@@ -36,37 +36,46 @@ impl Interpreter {
         Ok(Self { recipes, main })
     }
 
-    fn run(self) -> Result<()> {
+    pub fn run(self) -> Result<()> {
         let main = self.recipes.get(&self.main).unwrap();
 
         RecipeRunner::new(&self, main).run()?;
         Ok(())
     }
+
+    #[cfg(test)]
+    pub fn run_and_return_state(&self) -> Result<RecipeRunner> {
+        let main = self.recipes.get(&self.main).unwrap();
+        let mut runner = RecipeRunner::new(&self, main);
+        runner.execute()?;
+
+        Ok(runner)
+    }
 }
 
 #[derive(Debug)]
-struct RecipeRunner<'a> {
-    interpreter: &'a Interpreter,
-    recipe: &'a Recipe,
-    ingredients: Option<HashMap<String, Option<Value>>>,
-    bowls: HashMap<NonZeroU32, ValueStack>,
-    dishes: HashMap<NonZeroU32, ValueStack>,
-    only_first_bowl: bool,
-    only_first_dish: bool,
-    line: u32,
-    refrigerated: bool,
+pub struct RecipeRunner<'a> {
+    pub interpreter: &'a Interpreter,
+    pub recipe: &'a Recipe,
+    pub ingredients: Option<HashMap<String, Option<Value>>>,
+    pub bowls: HashMap<NonZeroU32, ValueStack>,
+    pub dishes: HashMap<NonZeroU32, ValueStack>,
+    pub only_first_bowl: bool,
+    pub only_first_dish: bool,
+    pub line: u32,
+    pub refrigerated: bool,
 }
 
-#[derive(Copy, Clone, Debug)]
-struct Value {
-    num: i64,
-    measure: Measure,
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Value {
+    pub num: i64,
+    pub measure: Measure,
 }
 
 #[derive(Clone, Debug)]
-struct ValueStack {
-    number: NonZeroU32,
-    values: Vec<Value>,
+pub struct ValueStack {
+    pub number: NonZeroU32,
+    pub values: Vec<Value>,
 }
 
 impl ValueStack {
@@ -179,7 +188,7 @@ impl<'a> RecipeRunner<'a> {
         }
     }
 
-    fn run(mut self) -> Result<Option<ValueStack>> {
+    fn execute(&mut self) -> Result<()> {
         for stmt in &self.recipe.method {
             self.line = stmt.line;
             self.execute_stmt(stmt)?;
@@ -193,6 +202,12 @@ impl<'a> RecipeRunner<'a> {
                 self.print(n);
             }
         }
+
+        Ok(())
+    }
+
+    fn run(mut self) -> Result<Option<ValueStack>> {
+        self.execute()?;
 
         Ok(self.bowls.remove(&NonZeroU32::new(1).unwrap()))
     }
