@@ -44,9 +44,9 @@ pub fn report_error<S: std::fmt::Display>(line: u32, prefix: &str, msg: S) {
 #[cfg(test)]
 mod test {
     use super::direct_interpreter::{Interpreter, Value};
-    use super::lexer::{self, Token, TokenKind};
+    use super::lexer;
     use super::parser::{self, IgdtBowl, Ingredient, Measure, Recipe, Stmt, StmtKind};
-    use super::{RChefError, Result};
+    use super::Result;
 
     use std::num::NonZeroU32;
 
