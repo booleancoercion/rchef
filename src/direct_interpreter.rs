@@ -124,8 +124,7 @@ impl ValueStack {
 
         for val in self.values.iter().rev() {
             match val.measure {
-                Measure::Ambiguous => buffer.push(char::REPLACEMENT_CHARACTER),
-                Measure::Dry => buffer.push_str(&val.num.to_string()),
+                Measure::Dry | Measure::Ambiguous => buffer.push_str(&val.num.to_string()),
                 Measure::Liquid => {
                     if_chain! {
                         if let Ok(num) = u32::try_from(&val.num);
