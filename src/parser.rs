@@ -2,6 +2,8 @@ use crate::lexer::{Token, TokenKind};
 use crate::{RChefError, Result};
 use TokenKind::*;
 
+use num_bigint::BigInt;
+
 use std::array::IntoIter;
 use std::convert::TryInto;
 use std::iter::Peekable;
@@ -19,7 +21,7 @@ pub struct Recipe {
 pub struct Ingredient {
     pub name: String,
     pub measure: Measure,
-    pub initial_value: Option<i64>,
+    pub initial_value: Option<BigInt>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -190,9 +192,14 @@ impl<T: Iterator<Item = Token>> Parser<T> {
 
     /// Parses a single ingredient in an Ingredients section.
     fn parse_ingredient(&mut self) -> Result<Ingredient> {
-        let initial_value = if let Some(Number(n)) = self.peek() {
-            let n = *n;
-            self.advance();
+        let initial_value = if let Some(Number(_)) = self.peek() {
+            let n = match self.advance() {
+                Some(Token {
+                    kind: Number(n), ..
+                }) => n,
+                _ => unreachable!(),
+            };
+
             Some(n)
         } else {
             None
@@ -556,9 +563,9 @@ impl<T: Iterator<Item = Token>> Parser<T> {
         }
     }
 
-    /// Expects a Number and returns the i64 inside, if applicable.
+    /// Expects a Number and returns the BigInt inside, if applicable.
     #[rustfmt::skip]
-    fn expect_number(&mut self) -> Result<i64> {
+    fn expect_number(&mut self) -> Result<BigInt> {
         let t = self.advance();
 
         if let Some(Token { kind: Number(n), .. }) = t {

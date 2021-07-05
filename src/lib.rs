@@ -43,6 +43,8 @@ mod test {
     use super::parser::{self, IgdtBowl, Ingredient, Measure, Recipe, Stmt, StmtKind};
     use super::Result;
 
+    use num_bigint::BigInt;
+
     use std::num::NonZeroU32;
 
     fn do_parse(filename: &str) -> Result<Vec<Recipe>> {
@@ -54,7 +56,7 @@ mod test {
     fn ingredient<S: ToString>(
         name: S,
         measure: Measure,
-        initial_value: Option<i64>,
+        initial_value: Option<BigInt>,
     ) -> Ingredient {
         Ingredient {
             name: name.to_string(),
@@ -67,7 +69,7 @@ mod test {
         Stmt { kind, line }
     }
 
-    fn value(num: i64, measure: Measure) -> Value {
+    fn value(num: BigInt, measure: Measure) -> Value {
         Value { num, measure }
     }
 
@@ -80,15 +82,15 @@ mod test {
         let expected_recipes = vec![Recipe {
             title: "Hello World Souffle".into(),
             ingredients: Some(vec![
-                ingredient("haricot beans", Dry, Some(72)),
-                ingredient("eggs", Ambiguous, Some(101)),
-                ingredient("lard", Dry, Some(108)),
-                ingredient("oil", Ambiguous, Some(111)),
-                ingredient("zucchinis", Ambiguous, Some(32)),
-                ingredient("water", Liquid, Some(119)),
-                ingredient("red salmon", Dry, Some(114)),
-                ingredient("dijon mustard", Dry, Some(100)),
-                ingredient("potatoes", Ambiguous, Some(33)),
+                ingredient("haricot beans", Dry, Some(72.into())),
+                ingredient("eggs", Ambiguous, Some(101.into())),
+                ingredient("lard", Dry, Some(108.into())),
+                ingredient("oil", Ambiguous, Some(111.into())),
+                ingredient("zucchinis", Ambiguous, Some(32.into())),
+                ingredient("water", Liquid, Some(119.into())),
+                ingredient("red salmon", Dry, Some(114.into())),
+                ingredient("dijon mustard", Dry, Some(100.into())),
+                ingredient("potatoes", Ambiguous, Some(33.into())),
             ]),
             method: vec![
                 stmt(Put(IgdtBowl("potatoes".into(), None)), 16),
@@ -120,7 +122,7 @@ mod test {
             "Hello world!"
                 .chars()
                 .rev()
-                .map(|c| value(c as u32 as i64, Measure::Liquid))
+                .map(|c| value((c as u32).into(), Measure::Liquid))
                 .collect::<Vec<_>>(),
         );
         Ok(())
@@ -136,15 +138,15 @@ mod test {
             Recipe {
                 title: "Hello World Cake with Chocolate sauce".into(),
                 ingredients: Some(vec![
-                    ingredient("chocolate chips", Dry, Some(33)),
-                    ingredient("butter", Dry, Some(100)),
-                    ingredient("double cream", Liquid, Some(54)),
-                    ingredient("baking powder", Dry, Some(2)),
-                    ingredient("sugar", Dry, Some(114)),
-                    ingredient("beaten eggs", Liquid, Some(111)),
-                    ingredient("flour", Dry, Some(119)),
-                    ingredient("cocoa powder", Dry, Some(32)),
-                    ingredient("cake mixture", Dry, Some(0)),
+                    ingredient("chocolate chips", Dry, Some(33.into())),
+                    ingredient("butter", Dry, Some(100.into())),
+                    ingredient("double cream", Liquid, Some(54.into())),
+                    ingredient("baking powder", Dry, Some(2.into())),
+                    ingredient("sugar", Dry, Some(114.into())),
+                    ingredient("beaten eggs", Liquid, Some(111.into())),
+                    ingredient("flour", Dry, Some(119.into())),
+                    ingredient("cocoa powder", Dry, Some(32.into())),
+                    ingredient("cake mixture", Dry, Some(0.into())),
                 ]),
                 method: vec![
                     stmt(Put(IgdtBowl("chocolate chips".into(), None)), 26),
@@ -174,11 +176,11 @@ mod test {
             Recipe {
                 title: "Chocolate sauce".into(),
                 ingredients: Some(vec![
-                    ingredient("sugar", Dry, Some(111)),
-                    ingredient("hot water", Liquid, Some(108)),
-                    ingredient("heated double cream", Liquid, Some(108)),
-                    ingredient("dark chocolate", Dry, Some(101)),
-                    ingredient("milk chocolate", Dry, Some(72)),
+                    ingredient("sugar", Dry, Some(111.into())),
+                    ingredient("hot water", Liquid, Some(108.into())),
+                    ingredient("heated double cream", Liquid, Some(108.into())),
+                    ingredient("dark chocolate", Dry, Some(101.into())),
+                    ingredient("milk chocolate", Dry, Some(72.into())),
                 ]),
                 method: vec![
                     stmt(Clean(None), 52),
@@ -216,7 +218,7 @@ mod test {
             " world!" // the "Hello" part comes from the sous-chef
                 .chars()
                 .rev()
-                .map(|c| value(c as u32 as i64, Measure::Liquid))
+                .map(|c| value((c as u32).into(), Measure::Liquid))
                 .collect::<Vec<_>>(),
         );
         Ok(())

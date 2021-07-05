@@ -2,12 +2,13 @@ use crate::parser::{IgdtBowl, Measure, Recipe, Stmt, StmtKind};
 use crate::{RChefError, Result};
 
 use if_chain::if_chain;
+use num_bigint::BigInt;
 use rand::prelude::SliceRandom;
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
-use std::io;
+use std::io::{self, Write};
 use std::num::NonZeroU32;
 
 pub fn run(recipes: Vec<Recipe>) -> Result<()> {
@@ -66,9 +67,9 @@ pub struct RecipeRunner<'a> {
     pub refrigerated: bool,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Value {
-    pub num: i64,
+    pub num: BigInt,
     pub measure: Measure,
 }
 
@@ -121,13 +122,13 @@ impl ValueStack {
     fn printable(&self) -> String {
         let mut buffer = String::new();
 
-        for &val in self.values.iter().rev() {
+        for val in self.values.iter().rev() {
             match val.measure {
                 Measure::Ambiguous => buffer.push(char::REPLACEMENT_CHARACTER),
                 Measure::Dry => buffer.push_str(&val.num.to_string()),
                 Measure::Liquid => {
                     if_chain! {
-                        if let Ok(num) = u32::try_from(val.num);
+                        if let Ok(num) = u32::try_from(&val.num);
                         if let Some(ch) = char::from_u32(num);
                         then {
                             buffer.push(ch);
@@ -153,8 +154,8 @@ impl<'a> RecipeRunner<'a> {
                 .map(|ing| {
                     (
                         ing.name.clone(),
-                        ing.initial_value.map(|num| Value {
-                            num,
+                        ing.initial_value.as_ref().map(|num| Value {
+                            num: num.clone(),
                             measure: ing.measure,
                         }),
                     )
@@ -220,6 +221,7 @@ impl<'a> RecipeRunner<'a> {
                 let ing = self.get_ingredient_mut(ing)?;
                 let mut buffer = String::new();
                 print!("enter a number: ");
+                io::stdout().flush()?;
                 io::stdin().read_line(&mut buffer)?;
 
                 if let Ok(num) = buffer.trim().parse() {
@@ -232,7 +234,7 @@ impl<'a> RecipeRunner<'a> {
                 };
             }
             Put(IgdtBowl(igdt, bowl)) => {
-                let igdt = self.get_ingredient(igdt)?;
+                let igdt = self.get_ingredient(igdt)?.clone();
                 let bowl = self.get_bowl_mut(bowl)?;
 
                 bowl.push(igdt);
@@ -260,7 +262,7 @@ impl<'a> RecipeRunner<'a> {
                         .flatten()
                         .filter_map(|val| {
                             if val.measure == Measure::Dry {
-                                Some(val.num)
+                                Some(&val.num)
                             } else {
                                 None
                             }
@@ -297,7 +299,7 @@ impl<'a> RecipeRunner<'a> {
 
             StirInto(IgdtBowl(name, bowl)) => {
                 let igdt = self.get_ingredient(name)?;
-                let n: usize = if let Ok(n) = igdt.num.try_into() {
+                let n: usize = if let Ok(n) = (&igdt.num).try_into() {
                     n
                 } else {
                     return self.error(format!(
@@ -336,7 +338,7 @@ impl<'a> RecipeRunner<'a> {
                 stmts,
             } => 'outer: loop {
                 let igdt1 = self.get_ingredient(igdt1)?;
-                if igdt1.num == 0 {
+                if igdt1.num == 0.into() {
                     break;
                 }
 
@@ -419,17 +421,17 @@ impl<'a> RecipeRunner<'a> {
     fn arithmetic_helper(
         &mut self,
         igdtbowl: &IgdtBowl,
-        f: impl FnOnce(i64, i64) -> i64,
+        f: impl FnOnce(&BigInt, &BigInt) -> BigInt,
     ) -> Result<()> {
         let IgdtBowl(igdt, bowl) = igdtbowl;
 
-        let igdt = self.get_ingredient(igdt)?;
         let top = if let Some(val) = self.get_bowl_mut(bowl)?.pop() {
             val
         } else {
             return self.error("attempted to get value from bowl, but it was empty!");
         };
-        let num = f(igdt.num, top.num);
+        let igdt = self.get_ingredient(igdt)?;
+        let num = f(&igdt.num, &top.num);
 
         let bowl = self.get_bowl_mut(bowl)?;
         bowl.push(Value {
@@ -487,7 +489,7 @@ impl<'a> RecipeRunner<'a> {
         }
     }
 
-    fn get_ingredient(&self, ing: &str) -> Result<Value> {
+    fn get_ingredient(&self, ing: &str) -> Result<&Value> {
         let ingredients = if let Some(x) = self.ingredients.as_ref() {
             x
         } else {
@@ -504,7 +506,7 @@ impl<'a> RecipeRunner<'a> {
         };
 
         if let Some(val) = val.as_ref() {
-            Ok(*val)
+            Ok(val)
         } else {
             self.error(format!(
                 "attempted to use the value of ingredient '{}', but ingredient is uninitialized!",

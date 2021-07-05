@@ -3,6 +3,7 @@ use crate::{RChefError, Result};
 
 use if_chain::if_chain;
 use lazy_static::lazy_static;
+use num_bigint::BigInt;
 use phf::{phf_map, Map};
 
 use std::collections::HashMap;
@@ -13,7 +14,7 @@ use std::result::Result as StdResult;
 #[rustfmt::skip]
 pub enum TokenKind {
     // Types of user identifiers
-    Identifier(String), Ordinal(NonZeroU32), Number(i64),
+    Identifier(String), Ordinal(NonZeroU32), Number(BigInt),
 
     // Header keywords
     Ingredients, Method,
@@ -101,14 +102,14 @@ fn parse_ordinal(ident: &str) -> StdResult<NonZeroU32, ParseNumIdentError> {
 }
 
 /// Attempts to parse a numeric identifier/literal.
-fn parse_numeric(ident: &str) -> StdResult<i64, ParseNumIdentError> {
+fn parse_numeric(ident: &str) -> StdResult<BigInt, ParseNumIdentError> {
     use ParseNumIdentError::*;
 
     if ident.is_empty() || ident.chars().any(|c| !('0'..='9').contains(&c)) {
         Err(InvalidFormat)
     } else if ident.starts_with('0') {
         if ident.len() == 1 {
-            Ok(0)
+            Ok(0.into())
         } else {
             Err(AlmostValidFormat)
         }
