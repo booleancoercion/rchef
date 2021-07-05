@@ -138,7 +138,7 @@ impl ValueStack {
                 }
             }
 
-            // for debugging purposes
+            #[cfg(debug_assertions)]
             buffer.push(',');
         }
 
@@ -219,6 +219,7 @@ impl<'a> RecipeRunner<'a> {
             Take(ing) => {
                 let ing = self.get_ingredient_mut(ing)?;
                 let mut buffer = String::new();
+                print!("enter a number: ");
                 io::stdin().read_line(&mut buffer)?;
 
                 if let Ok(num) = buffer.trim().parse() {

@@ -27,13 +27,8 @@ pub enum RChefError {
 
 pub fn run(filename: &str) -> Result<()> {
     let source = fs::read_to_string(filename)?;
-
     let tokens = lexer::process(&source)?;
-    //println!("{:?}\n\n", tokens);
-
     let recipes = parser::process(tokens)?;
-    //println!("{:?}\n\n", recipes);
-
     direct_interpreter::run(recipes)
 }
 
