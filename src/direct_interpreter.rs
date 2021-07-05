@@ -11,18 +11,19 @@ use std::convert::TryInto;
 use std::io::{self, Write};
 use std::num::NonZeroU32;
 
-pub fn run(recipes: Vec<Recipe>) -> Result<()> {
-    Interpreter::new(recipes)?.run()
+pub fn run(recipes: Vec<Recipe>, spaced: bool) -> Result<()> {
+    Interpreter::new(recipes, spaced)?.run()
 }
 
 #[derive(Debug)]
 pub struct Interpreter {
     recipes: HashMap<String, Recipe>,
     main: String,
+    spaced: bool,
 }
 
 impl Interpreter {
-    pub fn new(recipes: Vec<Recipe>) -> Result<Self> {
+    pub fn new(recipes: Vec<Recipe>, spaced: bool) -> Result<Self> {
         if recipes.is_empty() {
             crate::report_error(0, "syntax ", "programs must contain at least one recipe");
             return Err(RChefError::Runtime);
@@ -34,7 +35,11 @@ impl Interpreter {
             .map(|rec| (rec.title.to_lowercase(), rec))
             .collect();
 
-        Ok(Self { recipes, main })
+        Ok(Self {
+            recipes,
+            main,
+            spaced,
+        })
     }
 
     pub fn run(self) -> Result<()> {
@@ -119,12 +124,22 @@ impl ValueStack {
         other.values.extend_from_slice(&self.values[..]);
     }
 
-    fn printable(&self) -> String {
+    fn printable(&self, spaced: bool) -> String {
         let mut buffer = String::new();
 
         for val in self.values.iter().rev() {
             match val.measure {
-                Measure::Dry | Measure::Ambiguous => buffer.push_str(&val.num.to_string()),
+                Measure::Dry | Measure::Ambiguous => {
+                    if spaced && !buffer.is_empty() && !buffer.ends_with(' ') {
+                        buffer.push(' ');
+                    }
+
+                    buffer.push_str(&val.num.to_string());
+
+                    if spaced {
+                        buffer.push(' ');
+                    }
+                }
                 Measure::Liquid => {
                     if_chain! {
                         if let Ok(num) = u32::try_from(&val.num);
@@ -137,9 +152,6 @@ impl ValueStack {
                     }
                 }
             }
-
-            #[cfg(debug_assertions)]
-            buffer.push(',');
         }
 
         buffer
@@ -410,7 +422,7 @@ impl<'a> RecipeRunner<'a> {
             let i = unsafe { NonZeroU32::new_unchecked(i) };
 
             if let Some(dish) = self.dishes.get(&i) {
-                buffer.push_str(&dish.printable());
+                buffer.push_str(&dish.printable(self.interpreter.spaced));
             }
         }
 

@@ -25,11 +25,11 @@ pub enum RChefError {
     Runtime,
 }
 
-pub fn run(filename: &str) -> Result<()> {
+pub fn run(filename: &str, spaced: bool) -> Result<()> {
     let source = fs::read_to_string(filename)?;
     let tokens = lexer::process(&source)?;
     let recipes = parser::process(tokens)?;
-    direct_interpreter::run(recipes)
+    direct_interpreter::run(recipes, spaced)
 }
 
 pub fn report_error<S: std::fmt::Display>(line: u32, prefix: &str, msg: S) {
@@ -113,7 +113,7 @@ mod test {
 
         assert_eq!(recipes, expected_recipes);
 
-        let interpreter = Interpreter::new(recipes)?;
+        let interpreter = Interpreter::new(recipes, false)?;
         let state = interpreter.run_and_return_state()?;
 
         let dish = state.dishes.get(&NonZeroU32::new(1).unwrap()).unwrap();
@@ -209,7 +209,7 @@ mod test {
 
         assert_eq!(recipes, expected_recipes);
 
-        let interpreter = Interpreter::new(recipes)?;
+        let interpreter = Interpreter::new(recipes, false)?;
         let state = interpreter.run_and_return_state()?;
 
         let dish = state.dishes.get(&NonZeroU32::new(1).unwrap()).unwrap();
