@@ -275,7 +275,8 @@ impl<T: Iterator<Item = Token>> Parser<T> {
             }
             Put => {
                 let ing = self.expect_ident()?;
-                self.expect_multiple([Into, The])?;
+                self.expect(Into)?;
+                self.eat_the();
                 let bowl = self.opt_ordinal();
                 self.expect(MixingBowl)?;
 
@@ -283,7 +284,8 @@ impl<T: Iterator<Item = Token>> Parser<T> {
             }
             Fold => {
                 let ing = self.expect_ident()?;
-                self.expect_multiple([Into, The])?;
+                self.expect(Into)?;
+                self.eat_the();
                 let bowl = self.opt_ordinal();
                 self.expect(MixingBowl)?;
 
@@ -321,7 +323,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
             Liquefy => match self.advexp()?.kind {
                 Identifier(ing) => self.stmt(StmtKind::Liquefy(ing)),
                 ContentsOf => {
-                    self.expect(The)?;
+                    self.eat_the();
                     let bowl = self.opt_ordinal();
                     self.expect(MixingBowl)?;
 
@@ -356,7 +358,8 @@ impl<T: Iterator<Item = Token>> Parser<T> {
                     self.stmt(StmtKind::Stir(None, num))
                 }
                 Identifier(ing) => {
-                    self.expect_multiple([Into, The])?;
+                    self.expect(Into)?;
+                    self.eat_the();
                     let bowl = self.opt_ordinal();
                     self.expect(MixingBowl)?;
 
@@ -373,15 +376,17 @@ impl<T: Iterator<Item = Token>> Parser<T> {
                 self.stmt(StmtKind::Mix(bowl))
             }
             Clean => {
-                self.expect(The)?;
+                self.eat_the();
                 let bowl = self.opt_ordinal();
                 self.expect(MixingBowl)?;
                 self.stmt(StmtKind::Clean(bowl))
             }
             Pour => {
-                self.expect_multiple([ContentsOf, The])?;
+                self.expect(ContentsOf)?;
+                self.eat_the();
                 let bowl = self.opt_ordinal();
-                self.expect_multiple([MixingBowl, Into, The])?;
+                self.expect_multiple([MixingBowl, Into])?;
+                self.eat_the();
                 let dish = self.opt_ordinal();
                 self.expect(BakingDish)?;
 
@@ -422,7 +427,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
 
     /// Parses a "Verb ... until verbed" loop statement, minus the initial verb identifier.
     fn parse_loop(&mut self, verb: String) -> Result<Stmt> {
-        self.expect(The)?;
+        self.eat_the();
         let ing1 = self.expect_ident()?;
         self.expect_fs()?;
         self.parse_loop_after_opening(verb, ing1)
@@ -533,7 +538,7 @@ impl<T: Iterator<Item = Token>> Parser<T> {
     fn opt_word_mxbowl(&mut self, kind: TokenKind) -> Result<BowlNo> {
         Ok(if self.matches(|k| *k == kind) {
             self.advance();
-            self.expect(The)?;
+            self.eat_the();
             let bowl = self.opt_ordinal();
             self.expect(MixingBowl)?;
 
@@ -666,6 +671,13 @@ impl<T: Iterator<Item = Token>> Parser<T> {
     /// Consumes BlankLine tokens until something else is encountered.
     fn eat_blanklines(&mut self) {
         while self.matches(|k| *k == BlankLine) {
+            self.advance();
+        }
+    }
+
+    /// Consumes The if present.
+    fn eat_the(&mut self) {
+        if self.matches(|k| *k == The) {
             self.advance();
         }
     }
