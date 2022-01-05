@@ -52,7 +52,7 @@ impl Interpreter {
     #[cfg(test)]
     pub fn run_and_return_state(&self) -> Result<RecipeRunner> {
         let main = self.recipes.get(&self.main).unwrap();
-        let mut runner = RecipeRunner::new(&self, main);
+        let mut runner = RecipeRunner::new(self, main);
         runner.execute()?;
 
         Ok(runner)
