@@ -1,6 +1,9 @@
-mod direct_interpreter;
+//mod direct_interpreter;
 mod lexer;
-mod parser;
+//mod parser;
+mod span;
+
+pub use span::Span;
 
 use thiserror::Error;
 
@@ -27,15 +30,20 @@ pub enum RChefError {
 
 pub fn run(filename: &str, spaced: bool) -> Result<()> {
     let source = fs::read_to_string(filename)?;
-    let tokens = lexer::process(&source)?;
-    let recipes = parser::process(tokens)?;
-    direct_interpreter::run(recipes, spaced)
+    let tokens = lexer::process(&source);
+    for token in tokens {
+        println!(r#"{} "{}""#, token, &source[token.span]);
+    }
+    //let recipes = parser::process(tokens)?;
+    //direct_interpreter::run(recipes, spaced)
+    Ok(())
 }
 
 pub fn report_error<S: std::fmt::Display>(line: u32, prefix: &str, msg: S) {
     eprintln!("[line {}] {}error: {}", line + 1, prefix, msg);
 }
 
+/*
 #[cfg(test)]
 mod test {
     use super::direct_interpreter::{Interpreter, Value};
@@ -49,7 +57,7 @@ mod test {
 
     fn do_parse(filename: &str) -> Result<Vec<Recipe>> {
         let source = std::fs::read_to_string(filename)?;
-        let tokens = lexer::process(&source)?;
+        let tokens = lexer::process(&source);
         parser::process(tokens)
     }
 
@@ -232,3 +240,4 @@ mod test {
 
     */
 }
+*/

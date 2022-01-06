@@ -4,18 +4,18 @@ use std::process;
 
 fn main() {
     let matches = App::new("rchef")
-        .version("0.1")
+        .version("0.2")
         .author("boolean_coercion <booleancoercion@gmail.com>")
         .about("A fully-featured interpreter for the esoteric programming language Chef.")
         .arg(
             Arg::new("spaced")
-                .about("Determines whether your program will run in spaced mode.")
+                .help("Determines whether your program will run in spaced mode.")
                 .short('s')
                 .long("spaced"),
         )
         .arg(
             Arg::new("filename")
-                .about("The filename of the program you intend to run.")
+                .help("The filename of the program you intend to run.")
                 .required(true),
         )
         .get_matches();

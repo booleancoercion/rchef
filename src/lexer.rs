@@ -1,762 +1,561 @@
-mod first_pass;
-mod second_pass;
+use std::fmt::Display;
 
-use crate::Result;
-pub use second_pass::{Token, TokenKind};
+use super::Span;
 
-pub fn process(source: &str) -> Result<Vec<Token>> {
-    let subtokens = first_pass::process(source);
-    second_pass::process(subtokens)
+use itertools::Itertools;
+use logos::Logos;
+
+#[rustfmt::skip]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Logos)]
+pub enum TokenKind {
+    #[regex("[a-zA-Z]+")]
+    Ident,
+
+    #[regex(r"\d*([^1]1st|[^1]2nd|[^1]3rd|[0456789]th|1[123]th)")]
+    Ord,
+
+    #[regex(r"[-+]?\d+")]
+    Num,
+
+    #[regex("k?g|pinch(es)?")]
+    DryMeasure,
+
+    #[regex("m?l|dash(es)?")]
+    LiquidMeasure,
+
+    #[regex("cups?|teaspoons?|tablespoons?")]
+    AmbiguousMeasure,
+
+    #[token("Ingredients")] Ingredients,
+    #[token("Method")] Method,
+    #[token("Take")] Take,
+    #[token("Put")] Put,
+    #[token("into")] Into,
+    #[token("Fold")] Fold,
+    #[token("Add")] Add,
+    #[token("to")] To,
+    #[token("Remove")] Remove,
+    #[token("Combine")] Combine,
+    #[token("Divide")] Divide,
+    #[token("Liquefy")] Liquefy,
+    #[token("the")] The,
+    #[token("Stir")] Stir,
+    #[token("for")] For,
+    #[regex("minutes?")] Minutes,
+    #[token("Mix")] Mix,
+    #[token("well")] Well,
+    #[token("Clean")] Clean,
+    #[token("Pour")] Pour,
+    #[token("until")] Until,
+    #[token("Refrigerate")] Refrigerate,
+    #[regex("hours?")] Hours,
+    #[token("Serves")] Serves,
+    #[token("from")] From,
+    #[token("refrigerator")] Refrigerator,
+    #[token("mixing bowl")] MixingBowl,
+    #[token("dry ingredients")] DryIngredients,
+    #[token("contents of")] ContentsOf,
+    #[token("baking dish")] BakingDish,
+    #[token("Set aside")] SetAside,
+    #[token("Serve with")] ServeWith,
+
+    #[token("\n")] NewLine,
+    #[token(".")] FullStop,
+
+    #[regex("[ \r\t]+", logos::skip)]
+    #[error]
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Token {
+    pub kind: TokenKind,
+    pub span: Span,
+}
+
+pub fn process(source: &str) -> Vec<Token> {
+    TokenKind::lexer(source)
+        .spanned()
+        .map(|(kind, range)| Token {
+            kind,
+            span: range.into(),
+        })
+        .coalesce(|tok1, tok2| {
+            if tok1.kind == TokenKind::Ident && tok2.kind == TokenKind::Ident {
+                Ok(Token {
+                    kind: TokenKind::Ident,
+                    span: (tok1.span.start..tok2.span.end).into(),
+                })
+            } else {
+                Err((tok1, tok2))
+            }
+        })
+        .collect()
+}
+
+impl Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}[{}..{}]", self.kind, self.span.start, self.span.end)
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{first_pass, second_pass};
-    use super::{Token, TokenKind};
-    use crate::Result;
-    use first_pass::{SubToken, SubTokenKind};
+    use itertools::Itertools;
 
-    use std::fs;
-    use std::num::NonZeroU32;
+    use super::process;
+    use super::TokenKind;
 
-    fn subtoken(kind: SubTokenKind, line: u32) -> SubToken {
-        SubToken { kind, line }
-    }
+    #[test]
+    fn coalesced_idents() {
+        let source = "This is some refrigerator source. Fold mixing bowl into.";
+        let tokens = process(source)
+            .iter()
+            .map(|token| token.kind)
+            .collect::<Vec<_>>();
 
-    fn token(kind: TokenKind, line: u32) -> Token {
-        Token { kind, line }
+        use TokenKind::*;
+
+        assert_eq!(
+            tokens,
+            vec![
+                Ident,
+                Refrigerator,
+                Ident,
+                FullStop,
+                Fold,
+                MixingBowl,
+                TokenKind::Into,
+                FullStop
+            ]
+        );
     }
 
     #[test]
-    fn every_token() -> Result<()> {
-        let source = fs::read_to_string("programs/tokens.chef")?;
+    fn all_tokens() {
+        let source = std::fs::read_to_string("programs/tokens.chef").unwrap();
+        let tokens = process(&source);
 
-        let subtokens = first_pass::process(&source);
-        let expected_subtokens = {
-            use SubTokenKind::*;
-            vec![
-                subtoken(Word("Tokens"), 0),
-                subtoken(FullStop, 0),
-                subtoken(BlankLine, 1),
-                subtoken(Word("Ingredients"), 2),
-                subtoken(FullStop, 2),
-                subtoken(NewLine, 2),
-                subtoken(Word("1"), 3),
-                subtoken(Word("g"), 3),
-                subtoken(Word("sugar"), 3),
-                subtoken(NewLine, 3),
-                subtoken(Word("1"), 4),
-                subtoken(Word("kg"), 4),
-                subtoken(Word("sugar"), 4),
-                subtoken(NewLine, 4),
-                subtoken(Word("1"), 5),
-                subtoken(Word("pinch"), 5),
-                subtoken(Word("sugar"), 5),
-                subtoken(NewLine, 5),
-                subtoken(Word("2"), 6),
-                subtoken(Word("pinches"), 6),
-                subtoken(Word("sugar"), 6),
-                subtoken(NewLine, 6),
-                subtoken(Word("1"), 7),
-                subtoken(Word("ml"), 7),
-                subtoken(Word("water"), 7),
-                subtoken(NewLine, 7),
-                subtoken(Word("1"), 8),
-                subtoken(Word("l"), 8),
-                subtoken(Word("water"), 8),
-                subtoken(NewLine, 8),
-                subtoken(Word("1"), 9),
-                subtoken(Word("dash"), 9),
-                subtoken(Word("water"), 9),
-                subtoken(NewLine, 9),
-                subtoken(Word("2"), 10),
-                subtoken(Word("dashes"), 10),
-                subtoken(Word("water"), 10),
-                subtoken(NewLine, 10),
-                subtoken(Word("1"), 11),
-                subtoken(Word("cup"), 11),
-                subtoken(Word("soda"), 11),
-                subtoken(NewLine, 11),
-                subtoken(Word("2"), 12),
-                subtoken(Word("cups"), 12),
-                subtoken(Word("soda"), 12),
-                subtoken(NewLine, 12),
-                subtoken(Word("1"), 13),
-                subtoken(Word("teaspoon"), 13),
-                subtoken(Word("soda"), 13),
-                subtoken(NewLine, 13),
-                subtoken(Word("2"), 14),
-                subtoken(Word("teaspoons"), 14),
-                subtoken(Word("soda"), 14),
-                subtoken(NewLine, 14),
-                subtoken(Word("1"), 15),
-                subtoken(Word("tablespoon"), 15),
-                subtoken(Word("soda"), 15),
-                subtoken(NewLine, 15),
-                subtoken(Word("2"), 16),
-                subtoken(Word("tablespoons"), 16),
-                subtoken(Word("soda"), 16),
-                subtoken(NewLine, 16),
-                subtoken(Word("1"), 17),
-                subtoken(Word("heaped"), 17),
-                subtoken(Word("cup"), 17),
-                subtoken(Word("flour"), 17),
-                subtoken(NewLine, 17),
-                subtoken(Word("1"), 18),
-                subtoken(Word("level"), 18),
-                subtoken(Word("cup"), 18),
-                subtoken(Word("flour"), 18),
-                subtoken(BlankLine, 19),
-                subtoken(Word("Method"), 20),
-                subtoken(FullStop, 20),
-                subtoken(NewLine, 20),
-                subtoken(Word("Take"), 21),
-                subtoken(Word("sugar"), 21),
-                subtoken(Word("from"), 21),
-                subtoken(Word("refrigerator"), 21),
-                subtoken(FullStop, 21),
-                subtoken(NewLine, 21),
-                subtoken(Word("Put"), 22),
-                subtoken(Word("sugar"), 22),
-                subtoken(Word("into"), 22),
-                subtoken(Word("the"), 22),
-                subtoken(Word("mixing"), 22),
-                subtoken(Word("bowl"), 22),
-                subtoken(FullStop, 22),
-                subtoken(NewLine, 22),
-                subtoken(Word("Put"), 23),
-                subtoken(Word("sugar"), 23),
-                subtoken(Word("into"), 23),
-                subtoken(Word("the"), 23),
-                subtoken(Word("2nd"), 23),
-                subtoken(Word("mixing"), 23),
-                subtoken(Word("bowl"), 23),
-                subtoken(FullStop, 23),
-                subtoken(NewLine, 23),
-                subtoken(Word("Fold"), 24),
-                subtoken(Word("sugar"), 24),
-                subtoken(Word("into"), 24),
-                subtoken(Word("the"), 24),
-                subtoken(Word("mixing"), 24),
-                subtoken(Word("bowl"), 24),
-                subtoken(FullStop, 24),
-                subtoken(NewLine, 24),
-                subtoken(Word("Fold"), 25),
-                subtoken(Word("sugar"), 25),
-                subtoken(Word("into"), 25),
-                subtoken(Word("the"), 25),
-                subtoken(Word("3rd"), 25),
-                subtoken(Word("mixing"), 25),
-                subtoken(Word("bowl"), 25),
-                subtoken(FullStop, 25),
-                subtoken(NewLine, 25),
-                subtoken(Word("Add"), 26),
-                subtoken(Word("sugar"), 26),
-                subtoken(FullStop, 26),
-                subtoken(NewLine, 26),
-                subtoken(Word("Add"), 27),
-                subtoken(Word("sugar"), 27),
-                subtoken(Word("into"), 27),
-                subtoken(Word("the"), 27),
-                subtoken(Word("mixing"), 27),
-                subtoken(Word("bowl"), 27),
-                subtoken(FullStop, 27),
-                subtoken(NewLine, 27),
-                subtoken(Word("Add"), 28),
-                subtoken(Word("sugar"), 28),
-                subtoken(Word("into"), 28),
-                subtoken(Word("the"), 28),
-                subtoken(Word("1st"), 28),
-                subtoken(Word("mixing"), 28),
-                subtoken(Word("bowl"), 28),
-                subtoken(FullStop, 28),
-                subtoken(NewLine, 28),
-                subtoken(Word("Remove"), 29),
-                subtoken(Word("sugar"), 29),
-                subtoken(FullStop, 29),
-                subtoken(NewLine, 29),
-                subtoken(Word("Remove"), 30),
-                subtoken(Word("sugar"), 30),
-                subtoken(Word("from"), 30),
-                subtoken(Word("the"), 30),
-                subtoken(Word("mixing"), 30),
-                subtoken(Word("bowl"), 30),
-                subtoken(FullStop, 30),
-                subtoken(NewLine, 30),
-                subtoken(Word("Remove"), 31),
-                subtoken(Word("sugar"), 31),
-                subtoken(Word("from"), 31),
-                subtoken(Word("the"), 31),
-                subtoken(Word("4th"), 31),
-                subtoken(Word("mixing"), 31),
-                subtoken(Word("bowl"), 31),
-                subtoken(FullStop, 31),
-                subtoken(NewLine, 31),
-                subtoken(Word("Combine"), 32),
-                subtoken(Word("sugar"), 32),
-                subtoken(FullStop, 32),
-                subtoken(NewLine, 32),
-                subtoken(Word("Combine"), 33),
-                subtoken(Word("sugar"), 33),
-                subtoken(Word("into"), 33),
-                subtoken(Word("the"), 33),
-                subtoken(Word("mixing"), 33),
-                subtoken(Word("bowl"), 33),
-                subtoken(FullStop, 33),
-                subtoken(NewLine, 33),
-                subtoken(Word("Divide"), 34),
-                subtoken(Word("sugar"), 34),
-                subtoken(FullStop, 34),
-                subtoken(NewLine, 34),
-                subtoken(Word("Divide"), 35),
-                subtoken(Word("sugar"), 35),
-                subtoken(Word("into"), 35),
-                subtoken(Word("the"), 35),
-                subtoken(Word("mixing"), 35),
-                subtoken(Word("bowl"), 35),
-                subtoken(FullStop, 35),
-                subtoken(NewLine, 35),
-                subtoken(Word("Add"), 36),
-                subtoken(Word("dry"), 36),
-                subtoken(Word("ingredients"), 36),
-                subtoken(FullStop, 36),
-                subtoken(NewLine, 36),
-                subtoken(Word("Add"), 37),
-                subtoken(Word("dry"), 37),
-                subtoken(Word("ingredients"), 37),
-                subtoken(Word("to"), 37),
-                subtoken(Word("the"), 37),
-                subtoken(Word("10th"), 37),
-                subtoken(Word("mixing"), 37),
-                subtoken(Word("bowl"), 37),
-                subtoken(FullStop, 37),
-                subtoken(NewLine, 37),
-                subtoken(Word("Liquefy"), 38),
-                subtoken(Word("sugar"), 38),
-                subtoken(FullStop, 38),
-                subtoken(NewLine, 38),
-                subtoken(Word("Liquefy"), 39),
-                subtoken(Word("contents"), 39),
-                subtoken(Word("of"), 39),
-                subtoken(Word("the"), 39),
-                subtoken(Word("mixing"), 39),
-                subtoken(Word("bowl"), 39),
-                subtoken(FullStop, 39),
-                subtoken(NewLine, 39),
-                subtoken(Word("Stir"), 40),
-                subtoken(Word("for"), 40),
-                subtoken(Word("10"), 40),
-                subtoken(Word("minutes"), 40),
-                subtoken(FullStop, 40),
-                subtoken(NewLine, 40),
-                subtoken(Word("Stir"), 41),
-                subtoken(Word("for"), 41),
-                subtoken(Word("1"), 41),
-                subtoken(Word("minute"), 41),
-                subtoken(FullStop, 41),
-                subtoken(NewLine, 41),
-                subtoken(Word("Stir"), 42),
-                subtoken(Word("the"), 42),
-                subtoken(Word("mixing"), 42),
-                subtoken(Word("bowl"), 42),
-                subtoken(Word("for"), 42),
-                subtoken(Word("2"), 42),
-                subtoken(Word("minutes"), 42),
-                subtoken(FullStop, 42),
-                subtoken(NewLine, 42),
-                subtoken(Word("Stir"), 43),
-                subtoken(Word("sugar"), 43),
-                subtoken(Word("into"), 43),
-                subtoken(Word("the"), 43),
-                subtoken(Word("mixing"), 43),
-                subtoken(Word("bowl"), 43),
-                subtoken(FullStop, 43),
-                subtoken(NewLine, 43),
-                subtoken(Word("Mix"), 44),
-                subtoken(Word("well"), 44),
-                subtoken(FullStop, 44),
-                subtoken(NewLine, 44),
-                subtoken(Word("Mix"), 45),
-                subtoken(Word("the"), 45),
-                subtoken(Word("mixing"), 45),
-                subtoken(Word("bowl"), 45),
-                subtoken(Word("well"), 45),
-                subtoken(FullStop, 45),
-                subtoken(NewLine, 45),
-                subtoken(Word("Clean"), 46),
-                subtoken(Word("the"), 46),
-                subtoken(Word("mixing"), 46),
-                subtoken(Word("bowl"), 46),
-                subtoken(FullStop, 46),
-                subtoken(NewLine, 46),
-                subtoken(Word("Pour"), 47),
-                subtoken(Word("contents"), 47),
-                subtoken(Word("of"), 47),
-                subtoken(Word("the"), 47),
-                subtoken(Word("mixing"), 47),
-                subtoken(Word("bowl"), 47),
-                subtoken(Word("into"), 47),
-                subtoken(Word("the"), 47),
-                subtoken(Word("2nd"), 47),
-                subtoken(Word("baking"), 47),
-                subtoken(Word("dish"), 47),
-                subtoken(FullStop, 47),
-                subtoken(NewLine, 47),
-                subtoken(Word("Pour"), 48),
-                subtoken(Word("contents"), 48),
-                subtoken(Word("of"), 48),
-                subtoken(Word("the"), 48),
-                subtoken(Word("1st"), 48),
-                subtoken(Word("mixing"), 48),
-                subtoken(Word("bowl"), 48),
-                subtoken(Word("into"), 48),
-                subtoken(Word("the"), 48),
-                subtoken(Word("baking"), 48),
-                subtoken(Word("dish"), 48),
-                subtoken(FullStop, 48),
-                subtoken(NewLine, 48),
-                subtoken(Word("Pour"), 49),
-                subtoken(Word("contents"), 49),
-                subtoken(Word("of"), 49),
-                subtoken(Word("the"), 49),
-                subtoken(Word("10th"), 49),
-                subtoken(Word("mixing"), 49),
-                subtoken(Word("bowl"), 49),
-                subtoken(Word("into"), 49),
-                subtoken(Word("the"), 49),
-                subtoken(Word("10th"), 49),
-                subtoken(Word("baking"), 49),
-                subtoken(Word("dish"), 49),
-                subtoken(FullStop, 49),
-                subtoken(NewLine, 49),
-                subtoken(Word("Loop"), 50),
-                subtoken(Word("the"), 50),
-                subtoken(Word("sugar"), 50),
-                subtoken(FullStop, 50),
-                subtoken(NewLine, 50),
-                subtoken(Word("Set"), 51),
-                subtoken(Word("aside"), 51),
-                subtoken(FullStop, 51),
-                subtoken(NewLine, 51),
-                subtoken(Word("Keep"), 52),
-                subtoken(Word("looping"), 52),
-                subtoken(Word("the"), 52),
-                subtoken(Word("sugar"), 52),
-                subtoken(Word("until"), 52),
-                subtoken(Word("looped"), 52),
-                subtoken(FullStop, 52),
-                subtoken(NewLine, 52),
-                subtoken(Word("Serve"), 53),
-                subtoken(Word("with"), 53),
-                subtoken(Word("tokens"), 53),
-                subtoken(FullStop, 53),
-                subtoken(NewLine, 53),
-                subtoken(Word("Refrigerate"), 54),
-                subtoken(FullStop, 54),
-                subtoken(NewLine, 54),
-                subtoken(Word("Refrigerate"), 55),
-                subtoken(Word("for"), 55),
-                subtoken(Word("2"), 55),
-                subtoken(Word("hours"), 55),
-                subtoken(FullStop, 55),
-                subtoken(NewLine, 55),
-                subtoken(Word("Refrigerate"), 56),
-                subtoken(Word("for"), 56),
-                subtoken(Word("1"), 56),
-                subtoken(Word("hour"), 56),
-                subtoken(FullStop, 56),
-                subtoken(BlankLine, 57),
-                subtoken(Word("Serves"), 58),
-                subtoken(Word("56"), 58),
-                subtoken(FullStop, 58),
-                subtoken(BlankLine, 59),
-                subtoken(Word("Tokens"), 60),
-                subtoken(Word("2"), 60),
-                subtoken(FullStop, 60),
-                subtoken(BlankLine, 61),
-                subtoken(Word("Ingredients"), 62),
-                subtoken(FullStop, 62),
-                subtoken(NewLine, 62),
-                subtoken(Word("1"), 63),
-                subtoken(Word("egg"), 63),
-                subtoken(BlankLine, 64),
-                subtoken(Word("Method"), 65),
-                subtoken(FullStop, 65),
-                subtoken(NewLine, 65),
-                subtoken(Word("Clean"), 66),
-                subtoken(Word("the"), 66),
-                subtoken(Word("mixing"), 66),
-                subtoken(Word("bowl"), 66),
-                subtoken(FullStop, 66),
-                subtoken(NewLine, 66),
-                subtoken(Word("Put"), 67),
-                subtoken(Word("egg"), 67),
-                subtoken(Word("into"), 67),
-                subtoken(Word("the"), 67),
-                subtoken(Word("mixing"), 67),
-                subtoken(Word("bowl"), 67),
-                subtoken(FullStop, 67),
-                subtoken(NewLine, 67),
-                subtoken(Word("Refrigerate"), 68),
-                subtoken(Word("for"), 68),
-                subtoken(Word("10"), 68),
-                subtoken(Word("hours"), 68),
-                subtoken(FullStop, 68),
-                subtoken(BlankLine, 69),
-                subtoken(Word("Serves"), 70),
-                subtoken(Word("10"), 70),
-                subtoken(FullStop, 70),
-                subtoken(Eof, 70),
-            ]
-        };
-        assert_eq!(subtokens, expected_subtokens);
-
-        let tokens = second_pass::process(subtokens)?;
-        let expected_tokens = {
-            use TokenKind::*;
-            vec![
-                token(Identifier("Tokens".into()), 0),
-                token(FullStop, 0),
-                token(BlankLine, 1),
-                token(Ingredients, 2),
-                token(FullStop, 2),
-                token(NewLine, 2),
-                token(Number(1.into()), 3),
-                token(DryMeasure, 3),
-                token(Identifier("sugar".into()), 3),
-                token(NewLine, 3),
-                token(Number(1.into()), 4),
-                token(DryMeasure, 4),
-                token(Identifier("sugar".into()), 4),
-                token(NewLine, 4),
-                token(Number(1.into()), 5),
-                token(DryMeasure, 5),
-                token(Identifier("sugar".into()), 5),
-                token(NewLine, 5),
-                token(Number(2.into()), 6),
-                token(DryMeasure, 6),
-                token(Identifier("sugar".into()), 6),
-                token(NewLine, 6),
-                token(Number(1.into()), 7),
-                token(LiquidMeasure, 7),
-                token(Identifier("water".into()), 7),
-                token(NewLine, 7),
-                token(Number(1.into()), 8),
-                token(LiquidMeasure, 8),
-                token(Identifier("water".into()), 8),
-                token(NewLine, 8),
-                token(Number(1.into()), 9),
-                token(LiquidMeasure, 9),
-                token(Identifier("water".into()), 9),
-                token(NewLine, 9),
-                token(Number(2.into()), 10),
-                token(LiquidMeasure, 10),
-                token(Identifier("water".into()), 10),
-                token(NewLine, 10),
-                token(Number(1.into()), 11),
-                token(AmbiguousMeasure, 11),
-                token(Identifier("soda".into()), 11),
-                token(NewLine, 11),
-                token(Number(2.into()), 12),
-                token(AmbiguousMeasure, 12),
-                token(Identifier("soda".into()), 12),
-                token(NewLine, 12),
-                token(Number(1.into()), 13),
-                token(AmbiguousMeasure, 13),
-                token(Identifier("soda".into()), 13),
-                token(NewLine, 13),
-                token(Number(2.into()), 14),
-                token(AmbiguousMeasure, 14),
-                token(Identifier("soda".into()), 14),
-                token(NewLine, 14),
-                token(Number(1.into()), 15),
-                token(AmbiguousMeasure, 15),
-                token(Identifier("soda".into()), 15),
-                token(NewLine, 15),
-                token(Number(2.into()), 16),
-                token(AmbiguousMeasure, 16),
-                token(Identifier("soda".into()), 16),
-                token(NewLine, 16),
-                token(Number(1.into()), 17),
-                token(MeasureType, 17),
-                token(AmbiguousMeasure, 17),
-                token(Identifier("flour".into()), 17),
-                token(NewLine, 17),
-                token(Number(1.into()), 18),
-                token(MeasureType, 18),
-                token(AmbiguousMeasure, 18),
-                token(Identifier("flour".into()), 18),
-                token(BlankLine, 19),
-                token(Method, 20),
-                token(FullStop, 20),
-                token(NewLine, 20),
-                token(Take, 21),
-                token(Identifier("sugar".into()), 21),
-                token(From, 21),
-                token(Refrigerator, 21),
-                token(FullStop, 21),
-                token(NewLine, 21),
-                token(Put, 22),
-                token(Identifier("sugar".into()), 22),
-                token(Into, 22),
-                token(The, 22),
-                token(MixingBowl, 22),
-                token(FullStop, 22),
-                token(NewLine, 22),
-                token(Put, 23),
-                token(Identifier("sugar".into()), 23),
-                token(Into, 23),
-                token(The, 23),
-                token(Ordinal(NonZeroU32::new(2).unwrap()), 23),
-                token(MixingBowl, 23),
-                token(FullStop, 23),
-                token(NewLine, 23),
-                token(Fold, 24),
-                token(Identifier("sugar".into()), 24),
-                token(Into, 24),
-                token(The, 24),
-                token(MixingBowl, 24),
-                token(FullStop, 24),
-                token(NewLine, 24),
-                token(Fold, 25),
-                token(Identifier("sugar".into()), 25),
-                token(Into, 25),
-                token(The, 25),
-                token(Ordinal(NonZeroU32::new(3).unwrap()), 25),
-                token(MixingBowl, 25),
-                token(FullStop, 25),
-                token(NewLine, 25),
-                token(Add, 26),
-                token(Identifier("sugar".into()), 26),
-                token(FullStop, 26),
-                token(NewLine, 26),
-                token(Add, 27),
-                token(Identifier("sugar".into()), 27),
-                token(Into, 27),
-                token(The, 27),
-                token(MixingBowl, 27),
-                token(FullStop, 27),
-                token(NewLine, 27),
-                token(Add, 28),
-                token(Identifier("sugar".into()), 28),
-                token(Into, 28),
-                token(The, 28),
-                token(Ordinal(NonZeroU32::new(1).unwrap()), 28),
-                token(MixingBowl, 28),
-                token(FullStop, 28),
-                token(NewLine, 28),
-                token(Remove, 29),
-                token(Identifier("sugar".into()), 29),
-                token(FullStop, 29),
-                token(NewLine, 29),
-                token(Remove, 30),
-                token(Identifier("sugar".into()), 30),
-                token(From, 30),
-                token(The, 30),
-                token(MixingBowl, 30),
-                token(FullStop, 30),
-                token(NewLine, 30),
-                token(Remove, 31),
-                token(Identifier("sugar".into()), 31),
-                token(From, 31),
-                token(The, 31),
-                token(Ordinal(NonZeroU32::new(4).unwrap()), 31),
-                token(MixingBowl, 31),
-                token(FullStop, 31),
-                token(NewLine, 31),
-                token(Combine, 32),
-                token(Identifier("sugar".into()), 32),
-                token(FullStop, 32),
-                token(NewLine, 32),
-                token(Combine, 33),
-                token(Identifier("sugar".into()), 33),
-                token(Into, 33),
-                token(The, 33),
-                token(MixingBowl, 33),
-                token(FullStop, 33),
-                token(NewLine, 33),
-                token(Divide, 34),
-                token(Identifier("sugar".into()), 34),
-                token(FullStop, 34),
-                token(NewLine, 34),
-                token(Divide, 35),
-                token(Identifier("sugar".into()), 35),
-                token(Into, 35),
-                token(The, 35),
-                token(MixingBowl, 35),
-                token(FullStop, 35),
-                token(NewLine, 35),
-                token(Add, 36),
-                token(DryIngredients, 36),
-                token(FullStop, 36),
-                token(NewLine, 36),
-                token(Add, 37),
-                token(DryIngredients, 37),
-                Token { kind: To, line: 37 },
-                token(The, 37),
-                token(Ordinal(NonZeroU32::new(10).unwrap()), 37),
-                token(MixingBowl, 37),
-                token(FullStop, 37),
-                token(NewLine, 37),
-                token(Liquefy, 38),
-                token(Identifier("sugar".into()), 38),
-                token(FullStop, 38),
-                token(NewLine, 38),
-                token(Liquefy, 39),
-                token(ContentsOf, 39),
-                token(The, 39),
-                token(MixingBowl, 39),
-                token(FullStop, 39),
-                token(NewLine, 39),
-                token(Stir, 40),
-                token(For, 40),
-                token(Number(10.into()), 40),
-                token(Minutes, 40),
-                token(FullStop, 40),
-                token(NewLine, 40),
-                token(Stir, 41),
-                token(For, 41),
-                token(Number(1.into()), 41),
-                token(Minutes, 41),
-                token(FullStop, 41),
-                token(NewLine, 41),
-                token(Stir, 42),
-                token(The, 42),
-                token(MixingBowl, 42),
-                token(For, 42),
-                token(Number(2.into()), 42),
-                token(Minutes, 42),
-                token(FullStop, 42),
-                token(NewLine, 42),
-                token(Stir, 43),
-                token(Identifier("sugar".into()), 43),
-                token(Into, 43),
-                token(The, 43),
-                token(MixingBowl, 43),
-                token(FullStop, 43),
-                token(NewLine, 43),
-                token(Mix, 44),
-                token(Well, 44),
-                token(FullStop, 44),
-                token(NewLine, 44),
-                token(Mix, 45),
-                token(The, 45),
-                token(MixingBowl, 45),
-                token(Well, 45),
-                token(FullStop, 45),
-                token(NewLine, 45),
-                token(Clean, 46),
-                token(The, 46),
-                token(MixingBowl, 46),
-                token(FullStop, 46),
-                token(NewLine, 46),
-                token(Pour, 47),
-                token(ContentsOf, 47),
-                token(The, 47),
-                token(MixingBowl, 47),
-                token(Into, 47),
-                token(The, 47),
-                token(Ordinal(NonZeroU32::new(2).unwrap()), 47),
-                token(BakingDish, 47),
-                token(FullStop, 47),
-                token(NewLine, 47),
-                token(Pour, 48),
-                token(ContentsOf, 48),
-                token(The, 48),
-                token(Ordinal(NonZeroU32::new(1).unwrap()), 48),
-                token(MixingBowl, 48),
-                token(Into, 48),
-                token(The, 48),
-                token(BakingDish, 48),
-                token(FullStop, 48),
-                token(NewLine, 48),
-                token(Pour, 49),
-                token(ContentsOf, 49),
-                token(The, 49),
-                token(Ordinal(NonZeroU32::new(10).unwrap()), 49),
-                token(MixingBowl, 49),
-                token(Into, 49),
-                token(The, 49),
-                token(Ordinal(NonZeroU32::new(10).unwrap()), 49),
-                token(BakingDish, 49),
-                token(FullStop, 49),
-                token(NewLine, 49),
-                token(Identifier("Loop".into()), 50),
-                token(The, 50),
-                token(Identifier("sugar".into()), 50),
-                token(FullStop, 50),
-                token(NewLine, 50),
-                token(SetAside, 51),
-                token(FullStop, 51),
-                token(NewLine, 51),
-                token(Identifier("Keep looping".into()), 52),
-                token(The, 52),
-                token(Identifier("sugar".into()), 52),
-                token(Until, 52),
-                token(Identifier("looped".into()), 52),
-                token(FullStop, 52),
-                token(NewLine, 52),
-                token(ServeWith, 53),
-                token(Identifier("tokens".into()), 53),
-                token(FullStop, 53),
-                token(NewLine, 53),
-                token(Refrigerate, 54),
-                token(FullStop, 54),
-                token(NewLine, 54),
-                token(Refrigerate, 55),
-                token(For, 55),
-                token(Number(2.into()), 55),
-                token(Hours, 55),
-                token(FullStop, 55),
-                token(NewLine, 55),
-                token(Refrigerate, 56),
-                token(For, 56),
-                token(Number(1.into()), 56),
-                token(Hours, 56),
-                token(FullStop, 56),
-                token(BlankLine, 57),
-                token(Serves, 58),
-                token(Number(56.into()), 58),
-                token(FullStop, 58),
-                token(BlankLine, 59),
-                token(Identifier("Tokens 2".into()), 60),
-                token(FullStop, 60),
-                token(BlankLine, 61),
-                token(Ingredients, 62),
-                token(FullStop, 62),
-                token(NewLine, 62),
-                token(Number(1.into()), 63),
-                token(Identifier("egg".into()), 63),
-                token(BlankLine, 64),
-                token(Method, 65),
-                token(FullStop, 65),
-                token(NewLine, 65),
-                token(Clean, 66),
-                token(The, 66),
-                token(MixingBowl, 66),
-                token(FullStop, 66),
-                token(NewLine, 66),
-                token(Put, 67),
-                token(Identifier("egg".into()), 67),
-                token(Into, 67),
-                token(The, 67),
-                token(MixingBowl, 67),
-                token(FullStop, 67),
-                token(NewLine, 67),
-                token(Refrigerate, 68),
-                token(For, 68),
-                token(Number(10.into()), 68),
-                token(Hours, 68),
-                token(FullStop, 68),
-                token(BlankLine, 69),
-                token(Serves, 70),
-                token(Number(10.into()), 70),
-                token(FullStop, 70),
-                token(Eof, 70),
-            ]
-        };
-
-        assert_eq!(tokens, expected_tokens);
-        Ok(())
+        assert_eq!(
+            &tokens
+                .iter()
+                .map(|token| format!("{} \"{}\"", token, &source[token.span]))
+                .join("\n"),
+            r#"Ident[0..6] "Tokens"
+FullStop[6..7] "."
+NewLine[8..9] "
+"
+NewLine[10..11] "
+"
+Ingredients[11..22] "Ingredients"
+FullStop[22..23] "."
+NewLine[24..25] "
+"
+Num[25..26] "1"
+DryMeasure[27..28] "g"
+Ident[29..34] "sugar"
+NewLine[35..36] "
+"
+Num[36..37] "1"
+DryMeasure[38..40] "kg"
+Ident[41..46] "sugar"
+NewLine[47..48] "
+"
+Num[48..49] "1"
+DryMeasure[50..55] "pinch"
+Ident[56..61] "sugar"
+NewLine[62..63] "
+"
+Num[63..64] "2"
+DryMeasure[65..72] "pinches"
+Ident[73..78] "sugar"
+NewLine[79..80] "
+"
+Num[80..81] "1"
+LiquidMeasure[82..84] "ml"
+Ident[85..90] "water"
+NewLine[91..92] "
+"
+Num[92..93] "1"
+LiquidMeasure[94..95] "l"
+Ident[96..101] "water"
+NewLine[102..103] "
+"
+Num[103..104] "1"
+LiquidMeasure[105..109] "dash"
+Ident[110..115] "water"
+NewLine[116..117] "
+"
+Num[117..118] "2"
+LiquidMeasure[119..125] "dashes"
+Ident[126..131] "water"
+NewLine[132..133] "
+"
+Num[133..134] "1"
+AmbiguousMeasure[135..138] "cup"
+Ident[139..143] "soda"
+NewLine[144..145] "
+"
+Num[145..146] "2"
+AmbiguousMeasure[147..151] "cups"
+Ident[152..156] "soda"
+NewLine[157..158] "
+"
+Num[158..159] "1"
+AmbiguousMeasure[160..168] "teaspoon"
+Ident[169..173] "soda"
+NewLine[174..175] "
+"
+Num[175..176] "2"
+AmbiguousMeasure[177..186] "teaspoons"
+Ident[187..191] "soda"
+NewLine[192..193] "
+"
+Num[193..194] "1"
+AmbiguousMeasure[195..205] "tablespoon"
+Ident[206..210] "soda"
+NewLine[211..212] "
+"
+Num[212..213] "2"
+AmbiguousMeasure[214..225] "tablespoons"
+Ident[226..230] "soda"
+NewLine[231..232] "
+"
+Num[232..233] "1"
+Ident[234..240] "heaped"
+AmbiguousMeasure[241..244] "cup"
+Ident[245..250] "flour"
+NewLine[251..252] "
+"
+Num[252..253] "1"
+Ident[254..259] "level"
+AmbiguousMeasure[260..263] "cup"
+Ident[264..269] "flour"
+NewLine[270..271] "
+"
+NewLine[272..273] "
+"
+Method[273..279] "Method"
+FullStop[279..280] "."
+NewLine[281..282] "
+"
+Take[282..286] "Take"
+Ident[287..292] "sugar"
+From[293..297] "from"
+Refrigerator[298..310] "refrigerator"
+FullStop[310..311] "."
+NewLine[312..313] "
+"
+Put[313..316] "Put"
+Ident[317..322] "sugar"
+Into[323..327] "into"
+The[328..331] "the"
+MixingBowl[332..343] "mixing bowl"
+FullStop[343..344] "."
+NewLine[345..346] "
+"
+Put[346..349] "Put"
+Ident[350..355] "sugar"
+Into[356..360] "into"
+The[361..364] "the"
+Ord[364..368] " 2nd"
+MixingBowl[369..380] "mixing bowl"
+FullStop[380..381] "."
+NewLine[382..383] "
+"
+Fold[383..387] "Fold"
+Ident[388..393] "sugar"
+Into[394..398] "into"
+The[399..402] "the"
+MixingBowl[403..414] "mixing bowl"
+FullStop[414..415] "."
+NewLine[416..417] "
+"
+Fold[417..421] "Fold"
+Ident[422..427] "sugar"
+Into[428..432] "into"
+The[433..436] "the"
+Ord[436..440] " 3rd"
+MixingBowl[441..452] "mixing bowl"
+FullStop[452..453] "."
+NewLine[454..455] "
+"
+Add[455..458] "Add"
+Ident[459..464] "sugar"
+FullStop[464..465] "."
+NewLine[466..467] "
+"
+Add[467..470] "Add"
+Ident[471..476] "sugar"
+Into[477..481] "into"
+The[482..485] "the"
+MixingBowl[486..497] "mixing bowl"
+FullStop[497..498] "."
+NewLine[499..500] "
+"
+Add[500..503] "Add"
+Ident[504..509] "sugar"
+Into[510..514] "into"
+The[515..518] "the"
+Ord[518..522] " 1st"
+MixingBowl[523..534] "mixing bowl"
+FullStop[534..535] "."
+NewLine[536..537] "
+"
+Remove[537..543] "Remove"
+Ident[544..549] "sugar"
+FullStop[549..550] "."
+NewLine[551..552] "
+"
+Remove[552..558] "Remove"
+Ident[559..564] "sugar"
+From[565..569] "from"
+The[570..573] "the"
+MixingBowl[574..585] "mixing bowl"
+FullStop[585..586] "."
+NewLine[587..588] "
+"
+Remove[588..594] "Remove"
+Ident[595..600] "sugar"
+From[601..605] "from"
+The[606..609] "the"
+Ord[610..613] "4th"
+MixingBowl[614..625] "mixing bowl"
+FullStop[625..626] "."
+NewLine[627..628] "
+"
+Combine[628..635] "Combine"
+Ident[636..641] "sugar"
+FullStop[641..642] "."
+NewLine[643..644] "
+"
+Combine[644..651] "Combine"
+Ident[652..657] "sugar"
+Into[658..662] "into"
+The[663..666] "the"
+MixingBowl[667..678] "mixing bowl"
+FullStop[678..679] "."
+NewLine[680..681] "
+"
+Divide[681..687] "Divide"
+Ident[688..693] "sugar"
+FullStop[693..694] "."
+NewLine[695..696] "
+"
+Divide[696..702] "Divide"
+Ident[703..708] "sugar"
+Into[709..713] "into"
+The[714..717] "the"
+MixingBowl[718..729] "mixing bowl"
+FullStop[729..730] "."
+NewLine[731..732] "
+"
+Add[732..735] "Add"
+DryIngredients[736..751] "dry ingredients"
+FullStop[751..752] "."
+NewLine[753..754] "
+"
+Add[754..757] "Add"
+DryIngredients[758..773] "dry ingredients"
+To[774..776] "to"
+The[777..780] "the"
+Ord[781..785] "10th"
+MixingBowl[786..797] "mixing bowl"
+FullStop[797..798] "."
+NewLine[799..800] "
+"
+Liquefy[800..807] "Liquefy"
+Ident[808..813] "sugar"
+FullStop[813..814] "."
+NewLine[815..816] "
+"
+Liquefy[816..823] "Liquefy"
+ContentsOf[824..835] "contents of"
+The[836..839] "the"
+MixingBowl[840..851] "mixing bowl"
+FullStop[851..852] "."
+NewLine[853..854] "
+"
+Stir[854..858] "Stir"
+For[859..862] "for"
+Num[863..865] "10"
+Minutes[866..873] "minutes"
+FullStop[873..874] "."
+NewLine[875..876] "
+"
+Stir[876..880] "Stir"
+For[881..884] "for"
+Num[885..886] "1"
+Minutes[887..893] "minute"
+FullStop[893..894] "."
+NewLine[895..896] "
+"
+Stir[896..900] "Stir"
+The[901..904] "the"
+MixingBowl[905..916] "mixing bowl"
+For[917..920] "for"
+Num[921..922] "2"
+Minutes[923..930] "minutes"
+FullStop[930..931] "."
+NewLine[932..933] "
+"
+Stir[933..937] "Stir"
+Ident[938..943] "sugar"
+Into[944..948] "into"
+The[949..952] "the"
+MixingBowl[953..964] "mixing bowl"
+FullStop[964..965] "."
+NewLine[966..967] "
+"
+Mix[967..970] "Mix"
+Well[971..975] "well"
+FullStop[975..976] "."
+NewLine[977..978] "
+"
+Mix[978..981] "Mix"
+The[982..985] "the"
+MixingBowl[986..997] "mixing bowl"
+Well[998..1002] "well"
+FullStop[1002..1003] "."
+NewLine[1004..1005] "
+"
+Clean[1005..1010] "Clean"
+The[1011..1014] "the"
+MixingBowl[1015..1026] "mixing bowl"
+FullStop[1026..1027] "."
+NewLine[1028..1029] "
+"
+Pour[1029..1033] "Pour"
+ContentsOf[1034..1045] "contents of"
+The[1046..1049] "the"
+MixingBowl[1050..1061] "mixing bowl"
+Into[1062..1066] "into"
+The[1067..1070] "the"
+Ord[1070..1074] " 2nd"
+BakingDish[1075..1086] "baking dish"
+FullStop[1086..1087] "."
+NewLine[1088..1089] "
+"
+Pour[1089..1093] "Pour"
+ContentsOf[1094..1105] "contents of"
+The[1106..1109] "the"
+Ord[1109..1113] " 1st"
+MixingBowl[1114..1125] "mixing bowl"
+Into[1126..1130] "into"
+The[1131..1134] "the"
+BakingDish[1135..1146] "baking dish"
+FullStop[1146..1147] "."
+NewLine[1148..1149] "
+"
+Pour[1149..1153] "Pour"
+ContentsOf[1154..1165] "contents of"
+The[1166..1169] "the"
+Ord[1170..1174] "10th"
+MixingBowl[1175..1186] "mixing bowl"
+Into[1187..1191] "into"
+The[1192..1195] "the"
+Ord[1196..1200] "10th"
+BakingDish[1201..1212] "baking dish"
+FullStop[1212..1213] "."
+NewLine[1214..1215] "
+"
+Ident[1215..1219] "Loop"
+The[1220..1223] "the"
+Ident[1224..1229] "sugar"
+FullStop[1229..1230] "."
+NewLine[1231..1232] "
+"
+SetAside[1232..1241] "Set aside"
+FullStop[1241..1242] "."
+NewLine[1243..1244] "
+"
+Ident[1244..1256] "Keep looping"
+The[1257..1260] "the"
+Ident[1261..1266] "sugar"
+Until[1267..1272] "until"
+Ident[1273..1279] "looped"
+FullStop[1279..1280] "."
+NewLine[1281..1282] "
+"
+ServeWith[1282..1292] "Serve with"
+Ident[1293..1299] "tokens"
+FullStop[1299..1300] "."
+NewLine[1301..1302] "
+"
+Refrigerate[1302..1313] "Refrigerate"
+FullStop[1313..1314] "."
+NewLine[1315..1316] "
+"
+Refrigerate[1316..1327] "Refrigerate"
+For[1328..1331] "for"
+Num[1332..1333] "2"
+Hours[1334..1339] "hours"
+FullStop[1339..1340] "."
+NewLine[1341..1342] "
+"
+Refrigerate[1342..1353] "Refrigerate"
+For[1354..1357] "for"
+Num[1358..1359] "1"
+Hours[1360..1364] "hour"
+FullStop[1364..1365] "."
+NewLine[1366..1367] "
+"
+NewLine[1368..1369] "
+"
+Serves[1369..1375] "Serves"
+Num[1376..1378] "56"
+FullStop[1378..1379] "."
+NewLine[1380..1381] "
+"
+NewLine[1382..1383] "
+"
+Ident[1383..1389] "Tokens"
+Num[1390..1391] "2"
+FullStop[1391..1392] "."
+NewLine[1393..1394] "
+"
+NewLine[1395..1396] "
+"
+Ingredients[1396..1407] "Ingredients"
+FullStop[1407..1408] "."
+NewLine[1409..1410] "
+"
+Num[1410..1411] "1"
+Ident[1412..1415] "egg"
+NewLine[1416..1417] "
+"
+NewLine[1418..1419] "
+"
+Method[1419..1425] "Method"
+FullStop[1425..1426] "."
+NewLine[1427..1428] "
+"
+Clean[1428..1433] "Clean"
+The[1434..1437] "the"
+MixingBowl[1438..1449] "mixing bowl"
+FullStop[1449..1450] "."
+NewLine[1451..1452] "
+"
+Put[1452..1455] "Put"
+Ident[1456..1459] "egg"
+Into[1460..1464] "into"
+The[1465..1468] "the"
+MixingBowl[1469..1480] "mixing bowl"
+FullStop[1480..1481] "."
+NewLine[1482..1483] "
+"
+Refrigerate[1483..1494] "Refrigerate"
+For[1495..1498] "for"
+Num[1499..1501] "10"
+Hours[1502..1507] "hours"
+FullStop[1507..1508] "."
+NewLine[1509..1510] "
+"
+NewLine[1511..1512] "
+"
+Serves[1512..1518] "Serves"
+Num[1519..1521] "10"
+FullStop[1521..1522] ".""#
+        );
     }
 }
