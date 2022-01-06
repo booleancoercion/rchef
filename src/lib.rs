@@ -1,9 +1,8 @@
 //mod direct_interpreter;
 mod lexer;
-//mod parser;
-mod span;
+mod parser;
 
-pub use span::Span;
+pub type Span = std::ops::Range<usize>;
 
 use thiserror::Error;
 
@@ -31,16 +30,9 @@ pub enum RChefError {
 pub fn run(filename: &str, spaced: bool) -> Result<()> {
     let source = fs::read_to_string(filename)?;
     let tokens = lexer::process(&source);
-    for token in tokens {
-        println!(r#"{} "{}""#, token, &source[token.span]);
-    }
-    //let recipes = parser::process(tokens)?;
+    let recipes = parser::process(&source, tokens)?;
     //direct_interpreter::run(recipes, spaced)
     Ok(())
-}
-
-pub fn report_error<S: std::fmt::Display>(line: u32, prefix: &str, msg: S) {
-    eprintln!("[line {}] {}error: {}", line + 1, prefix, msg);
 }
 
 /*

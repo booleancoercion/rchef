@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use super::Span;
 
 use itertools::Itertools;
@@ -7,7 +5,7 @@ use logos::Logos;
 
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Logos)]
-pub enum TokenKind {
+pub enum Token {
     #[regex("[a-zA-Z]+")]
     Ident,
 
@@ -67,25 +65,12 @@ pub enum TokenKind {
     Error,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Token {
-    pub kind: TokenKind,
-    pub span: Span,
-}
-
-pub fn process(source: &str) -> Vec<Token> {
-    TokenKind::lexer(source)
+pub fn process(source: &str) -> Vec<(Token, Span)> {
+    Token::lexer(source)
         .spanned()
-        .map(|(kind, range)| Token {
-            kind,
-            span: range.into(),
-        })
         .coalesce(|tok1, tok2| {
-            if tok1.kind == TokenKind::Ident && tok2.kind == TokenKind::Ident {
-                Ok(Token {
-                    kind: TokenKind::Ident,
-                    span: (tok1.span.start..tok2.span.end).into(),
-                })
+            if tok1.0 == Token::Ident && tok2.0 == Token::Ident {
+                Ok((Token::Ident, tok1.1.start..tok2.1.end))
             } else {
                 Err((tok1, tok2))
             }
@@ -93,28 +78,22 @@ pub fn process(source: &str) -> Vec<Token> {
         .collect()
 }
 
-impl Display for Token {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}[{}..{}]", self.kind, self.span.start, self.span.end)
-    }
-}
-
 #[cfg(test)]
 mod test {
     use itertools::Itertools;
 
     use super::process;
-    use super::TokenKind;
+    use super::Token;
 
     #[test]
     fn coalesced_idents() {
         let source = "This is some refrigerator source. Fold mixing bowl into.";
         let tokens = process(source)
             .iter()
-            .map(|token| token.kind)
+            .map(|(token, _)| *token)
             .collect::<Vec<_>>();
 
-        use TokenKind::*;
+        use Token::*;
 
         assert_eq!(
             tokens,
@@ -125,7 +104,7 @@ mod test {
                 FullStop,
                 Fold,
                 MixingBowl,
-                TokenKind::Into,
+                Token::Into,
                 FullStop
             ]
         );
@@ -138,8 +117,14 @@ mod test {
 
         assert_eq!(
             &tokens
-                .iter()
-                .map(|token| format!("{} \"{}\"", token, &source[token.span]))
+                .into_iter()
+                .map(|(token, span)| format!(
+                    "{:?}[{}..{}] \"{}\"",
+                    token,
+                    span.start,
+                    span.end,
+                    &source[span.clone()]
+                ))
                 .join("\n"),
             r#"Ident[0..6] "Tokens"
 FullStop[6..7] "."

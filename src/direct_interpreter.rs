@@ -25,7 +25,11 @@ pub struct Interpreter {
 impl Interpreter {
     pub fn new(recipes: Vec<Recipe>, spaced: bool) -> Result<Self> {
         if recipes.is_empty() {
-            crate::report_error(0, "syntax ", "programs must contain at least one recipe");
+            crate::report_error(
+                0,
+                "syntax ",
+                "programs must contain at least one recipe",
+            );
             return Err(RChefError::Runtime);
         }
 
@@ -325,8 +329,12 @@ impl<'a> RecipeRunner<'a> {
 
             Clean(bowl) => self.get_bowl_mut(bowl)?.clean(),
             Pour(bowl, dish) => {
-                let bowlkey =
-                    Self::bowldish_key_helper(self.line, "bowl", bowl, &mut self.only_first_bowl)?;
+                let bowlkey = Self::bowldish_key_helper(
+                    self.line,
+                    "bowl",
+                    bowl,
+                    &mut self.only_first_bowl,
+                )?;
                 let bowl = if let Some(bowl) = self.bowls.get(&bowlkey) {
                     bowl
                 } else {
@@ -386,12 +394,14 @@ impl<'a> RecipeRunner<'a> {
             },
             SetAside => unreachable!(), // this is unreachable in the way that the grammar is parsed
             ServeWith(recipe) => {
-                let recipe =
-                    if let Some(recipe) = self.interpreter.recipes.get(&recipe.to_lowercase()) {
-                        recipe
-                    } else {
-                        return self.error(format!("couldn't find the recipe {}", recipe));
-                    };
+                let recipe = if let Some(recipe) =
+                    self.interpreter.recipes.get(&recipe.to_lowercase())
+                {
+                    recipe
+                } else {
+                    return self
+                        .error(format!("couldn't find the recipe {}", recipe));
+                };
                 let bowl = RecipeRunner::with_bowls_dishes(
                     self.interpreter,
                     recipe,
@@ -401,7 +411,8 @@ impl<'a> RecipeRunner<'a> {
                 .run()?;
 
                 if let Some(outbowl) = bowl {
-                    let bowl = self.get_bowl_mut(&Some(NonZeroU32::new(1).unwrap()))?;
+                    let bowl =
+                        self.get_bowl_mut(&Some(NonZeroU32::new(1).unwrap()))?;
                     outbowl.pour_into(bowl);
                 }
             }
@@ -439,7 +450,8 @@ impl<'a> RecipeRunner<'a> {
         let top = if let Some(val) = self.get_bowl_mut(bowl)?.pop() {
             val
         } else {
-            return self.error("attempted to get value from bowl, but it was empty!");
+            return self
+                .error("attempted to get value from bowl, but it was empty!");
         };
         let igdt = self.get_ingredient(igdt)?;
         let num = f(&igdt.num, &top.num);
@@ -453,7 +465,10 @@ impl<'a> RecipeRunner<'a> {
         Ok(())
     }
 
-    fn get_bowl_mut(&mut self, key: &Option<NonZeroU32>) -> Result<&mut ValueStack> {
+    fn get_bowl_mut(
+        &mut self,
+        key: &Option<NonZeroU32>,
+    ) -> Result<&mut ValueStack> {
         Self::get_bowl_or_dish_mut(
             self.line,
             &mut self.bowls,
