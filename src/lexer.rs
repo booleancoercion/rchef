@@ -24,6 +24,9 @@ pub enum Token {
     #[regex("cups?|teaspoons?|tablespoons?")]
     AmbiguousMeasure,
 
+    #[regex("heaped|level")]
+    MeasureType,
+
     #[token("Ingredients")] Ingredients,
     #[token("Method")] Method,
     #[token("Take")] Take,
