@@ -38,17 +38,17 @@ pub struct Stmt {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum StmtKind {
     Take(String),
-    Put(IgdtBowl),
-    Fold(IgdtBowl),
-    Add(IgdtBowl),
-    Remove(IgdtBowl),
-    Combine(IgdtBowl),
-    Divide(IgdtBowl),
+    Put(String, BowlNo),
+    Fold(String, BowlNo),
+    Add(String, BowlNo),
+    Remove(String, BowlNo),
+    Combine(String, BowlNo),
+    Divide(String, BowlNo),
     AddDry(BowlNo),
     Liquefy(String),
     LiquefyConts(BowlNo),
-    Stir(BowlNo, usize),
-    StirInto(IgdtBowl),
+    Stir(BowlNo, BigInt),
+    StirInto(String, BowlNo),
     Mix(BowlNo),
     Clean(BowlNo),
     Pour(BowlNo, BowlNo),
@@ -65,12 +65,10 @@ pub enum StmtKind {
 
 pub type BowlNo = Option<NonZeroU32>;
 
-/// Shortcut for a (IngredientName, MixingBowlNumber) type,
-/// heavily used in arithmetic statements.
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct IgdtBowl(pub String, pub BowlNo);
-
-pub fn process(source: &str, tokens: Vec<(Token, Span)>) -> Vec<Recipe> {
+pub fn process(
+    source: &str,
+    tokens: Vec<(Token, Span)>,
+) -> Result<Vec<Recipe>, Vec<Simple<Token>>> {
     let last = &tokens.last().unwrap().1;
     let stream = Stream::from_iter(last.end..last.end + 1, tokens.into_iter());
     Recipe::parser(source)
@@ -78,15 +76,13 @@ pub fn process(source: &str, tokens: Vec<(Token, Span)>) -> Vec<Recipe> {
         .repeated()
         .then_ignore(end())
         .parse(stream)
-        .unwrap()
 }
 
 impl Recipe {
     fn parser(
         source: &str,
     ) -> impl Parser<Token, Self, Error = Simple<Token>> + '_ {
-        let title = just::<_, _, Simple<Token>>(Ident)
-            .map_with_span(map_string(source))
+        let title = ident(source)
             .then_ignore(just([FullStop, NewLine, NewLine]))
             .then_ignore(
                 one_of([Ingredients, Method])
@@ -124,7 +120,7 @@ impl Recipe {
             );
 
         let serves = just::<_, _, Simple<Token>>(Serves)
-            .ignore_then(just(Num).try_map(try_map_nonzero_u32(source)))
+            .ignore_then(nonzero_u32(source))
             .then_ignore(just(FullStop))
             .then_ignore(
                 just([NewLine, NewLine])
@@ -150,8 +146,7 @@ impl Ingredient {
     fn parser(
         source: &str,
     ) -> impl Parser<Token, Self, Error = Simple<Token>> + '_ {
-        just(Num)
-            .map_with_span(number(source))
+        number(source)
             .or_not()
             .then(
                 just(MeasureType)
@@ -173,7 +168,7 @@ impl Ingredient {
                         }
                     }).or_not(),
             )
-            .then(just(Ident).map_with_span(map_string(source)))
+            .then(ident(source))
             .map(|((initial_value, measure), name)| Ingredient {
                 name, measure: measure.unwrap_or(Measure::Ambiguous), initial_value
             })
@@ -184,45 +179,135 @@ impl Stmt {
     fn parser(
         source: &str,
     ) -> impl Parser<Token, Self, Error = Simple<Token>> + '_ {
-        one_of([
-            Take,
-            Put,
-            Fold,
-            Add,
-            Remove,
-            Combine,
-            Divide,
-            Liquefy,
-            Stir,
-            Mix,
-            Clean,
-            Pour,
-            Ident,
-            SetAside,
-            ServeWith,
-            Refrigerate,
-        ])
-        .ignore_then(take_until(just(FullStop)).to(StmtKind::SetAside)) // placeholder
-        .map_with_span(|kind, span| Stmt { kind, span })
+        let opt_the = || just(The).or_not();
+
+        let the_nth_mixing_bowl = || {
+            opt_the()
+                .ignore_then(ordinal(source).or_not())
+                .then_ignore(just(MixingBowl))
+        };
+
+        let opt_the_nth_mixing_bowl =
+            || the_nth_mixing_bowl().or_not().map(Option::flatten);
+
+        let common_tail = |tok| {
+            ident(source).then(
+                just(tok)
+                    .ignore_then(the_nth_mixing_bowl())
+                    .or_not()
+                    .map(Option::flatten),
+            )
+        };
+
+        let common = |tok1, tok2, func: fn(_, _) -> _| {
+            just(tok1)
+                .ignore_then(common_tail(tok2))
+                .map(move |(name, bowlno)| func(name, bowlno))
+        };
+
+        recursive(|stmt| {
+            choice((
+                just(Take)
+                    .ignore_then(ident(source).map(StmtKind::Take))
+                    .then_ignore(just([From, Refrigerator])),
+                common(Put, Into, StmtKind::Put),
+                common(Fold, Into, StmtKind::Fold),
+                common(Remove, From, StmtKind::Remove),
+                common(Combine, Into, StmtKind::Combine),
+                common(Divide, Into, StmtKind::Divide),
+                just(Add).ignore_then(choice((
+                    common_tail(To)
+                        .map(|(name, bowlno)| StmtKind::Add(name, bowlno)),
+                    just(DryIngredients)
+                        .ignore_then(
+                            just(To)
+                                .ignore_then(the_nth_mixing_bowl())
+                                .or_not()
+                                .map(Option::flatten),
+                        )
+                        .map(StmtKind::AddDry),
+                ))),
+                just(Liquefy).ignore_then(choice((
+                    ident(source).map(StmtKind::Liquefy),
+                    just([ContentsOf])
+                        .ignore_then(the_nth_mixing_bowl())
+                        .map(StmtKind::LiquefyConts),
+                ))),
+                just(Stir).ignore_then(choice((
+                    opt_the_nth_mixing_bowl()
+                        .then_ignore(just(For))
+                        .then(number(source))
+                        .then_ignore(just(Minutes))
+                        .map(|(bowlno, number)| StmtKind::Stir(bowlno, number)),
+                    common_tail(Into)
+                        .map(|(name, bowlno)| StmtKind::StirInto(name, bowlno)),
+                ))),
+                just(Mix)
+                    .ignore_then(opt_the_nth_mixing_bowl())
+                    .then_ignore(just(Well))
+                    .map(StmtKind::Mix),
+                just(Clean)
+                    .ignore_then(opt_the_nth_mixing_bowl())
+                    .map(StmtKind::Clean),
+                just([Pour, ContentsOf])
+                    .ignore_then(the_nth_mixing_bowl())
+                    .then_ignore(just(Into).then(opt_the()))
+                    .then(ordinal(source).or_not())
+                    .then_ignore(just(BakingDish))
+                    .map(|(bowlno, dishno)| StmtKind::Pour(bowlno, dishno)),
+                just(Ident).to(StmtKind::SetAside),
+                just(SetAside).to(StmtKind::SetAside),
+                just(ServeWith)
+                    .ignore_then(ident(source))
+                    .map(StmtKind::ServeWith),
+                just(Refrigerate)
+                    .ignore_then(
+                        just(For)
+                            .ignore_then(nonzero_u32(source))
+                            .then_ignore(just(Hours))
+                            .or_not(),
+                    )
+                    .map(StmtKind::Refrigerate),
+            ))
+            .then_ignore(just(FullStop))
+            .map_with_span(|kind, span| Stmt { kind, span })
+        })
     }
 }
 
-fn map_string(source: &str) -> impl Fn(Token, Span) -> String + '_ {
-    |_, span| source[span].to_owned()
+fn ident(
+    source: &str,
+) -> impl Parser<Token, String, Error = Simple<Token>> + '_ {
+    just::<_, _, Simple<Token>>(Ident)
+        .map_with_span(|_, span| source[span].to_owned())
 }
 
-fn try_map_nonzero_u32(
+fn nonzero_u32(
     source: &str,
-) -> impl Fn(Token, Span) -> crate::StdResult<NonZeroU32, Simple<Token>> + '_ {
-    |_, span| {
+) -> impl Parser<Token, NonZeroU32, Error = Simple<Token>> + '_ {
+    just::<_, _, Simple<Token>>(Num).try_map(|_, span| {
         let string = &source[span.clone()];
         str::parse::<NonZeroU32>(string)
             .map_err(|e| Simple::custom(span, format!("{}", e)))
-    }
+    })
 }
 
-fn number(source: &str) -> impl Fn(Token, Span) -> BigInt + '_ {
-    |_, span| source[span].parse().unwrap()
+fn ordinal(
+    source: &str,
+) -> impl Parser<Token, NonZeroU32, Error = Simple<Token>> + '_ {
+    just::<_, _, Simple<Token>>(Ord).try_map(|_, span| {
+        let span = span.start..span.end - 2;
+        let string = &source[span.clone()];
+        str::parse::<NonZeroU32>(string)
+            .map_err(|e| Simple::custom(span, format!("{}", e)))
+    })
+}
+
+fn number(
+    source: &str,
+) -> impl Parser<Token, BigInt, Error = Simple<Token>> + '_ {
+    just::<_, _, Simple<Token>>(Num)
+        .map_with_span(|_, span| source[span].parse().unwrap())
 }
 
 /// Checks if the verbs in the given strings match: verb2 essentially needs to be verb1 + "ed",

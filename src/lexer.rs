@@ -9,7 +9,7 @@ pub enum Token {
     #[regex("[a-zA-Z]+")]
     Ident,
 
-    #[regex(r"\d*([^1]1st|[^1]2nd|[^1]3rd|[0456789]th|1[123]th)")]
+    #[regex(r"((\d*[234567890])?(1st|2nd|3rd)|\d*[0456789]th|\d*1[123]th)")]
     Ord,
 
     #[regex(r"[-+]?\d+")]

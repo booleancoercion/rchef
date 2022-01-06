@@ -4,10 +4,17 @@ mod parser;
 
 pub type Span = std::ops::Range<usize>;
 
+use ariadne::Label;
+use ariadne::Report;
+use ariadne::ReportKind;
+use ariadne::Source;
+use chumsky::error::SimpleReason;
+use itertools::Itertools;
 use thiserror::Error;
 
 use std::fs;
 use std::io;
+use std::rc::Rc;
 use std::result::Result as StdResult;
 
 pub type Result<T> = StdResult<T, RChefError>;
@@ -28,10 +35,55 @@ pub enum RChefError {
 }
 
 pub fn run(filename: &str, spaced: bool) -> Result<()> {
-    let source = fs::read_to_string(filename)?;
+    let mut source = fs::read_to_string(filename)?;
+    source.retain(|c| c != '\r');
+    let mut ariadne_source = Source::from(&source);
     let tokens = lexer::process(&source);
-    let recipes = parser::process(&source, tokens);
-    dbg!(recipes);
+    let recipes = match parser::process(&source, tokens) {
+        Ok(recipes) => recipes,
+        Err(errors) => {
+            for error in errors {
+                let builder = Report::<Span>::build(
+                    ReportKind::Error,
+                    (),
+                    error.span().start,
+                );
+
+                let report = match error.reason() {
+                    SimpleReason::Unexpected => builder
+                        .with_message("encountered unexpected token")
+                        .with_label(Label::new(error.span()).with_message(
+                            format!(
+                                "expected {}, found {}",
+                                error.expected().map(|opt| {
+                                    if let Some(tok) = opt {
+                                        format!("{:?}", tok)
+                                    } else {
+                                        "None".to_owned()
+                                    }
+                                }).join(", "),
+                                if let Some(tok) = error.found() {
+                                    format!("{:?}", tok)
+                                } else {
+                                    "None".to_owned()
+                                }
+                            ),
+                        ))
+                        .finish(),
+                    SimpleReason::Custom(msg) => builder
+                        .with_message(msg)
+                        .with_label(
+                            Label::new(error.span()).with_message("here"),
+                        )
+                        .finish(),
+                    SimpleReason::Unclosed { .. } => unimplemented!(),
+                };
+
+                report.eprint(&mut ariadne_source).unwrap();
+            }
+            return Err(RChefError::Parse);
+        }
+    };
     //direct_interpreter::run(recipes, spaced)
     Ok(())
 }
