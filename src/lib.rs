@@ -4,17 +4,20 @@ mod parser;
 
 pub type Span = std::ops::Range<usize>;
 
+use ariadne::Color;
+use ariadne::Fmt;
 use ariadne::Label;
 use ariadne::Report;
 use ariadne::ReportKind;
 use ariadne::Source;
 use chumsky::error::SimpleReason;
+use chumsky::prelude::Simple;
 use itertools::Itertools;
+use lexer::Token;
 use thiserror::Error;
 
 use std::fs;
 use std::io;
-use std::rc::Rc;
 use std::result::Result as StdResult;
 
 pub type Result<T> = StdResult<T, RChefError>;
@@ -42,50 +45,57 @@ pub fn run(filename: &str, spaced: bool) -> Result<()> {
     let recipes = match parser::process(&source, tokens) {
         Ok(recipes) => recipes,
         Err(errors) => {
-            for error in errors {
-                let builder = Report::<Span>::build(
-                    ReportKind::Error,
-                    (),
-                    error.span().start,
-                );
-
-                let report = match error.reason() {
-                    SimpleReason::Unexpected => builder
-                        .with_message("encountered unexpected token")
-                        .with_label(Label::new(error.span()).with_message(
-                            format!(
-                                "expected {}, found {}",
-                                error.expected().map(|opt| {
-                                    if let Some(tok) = opt {
-                                        format!("{:?}", tok)
-                                    } else {
-                                        "None".to_owned()
-                                    }
-                                }).join(", "),
-                                if let Some(tok) = error.found() {
-                                    format!("{:?}", tok)
-                                } else {
-                                    "None".to_owned()
-                                }
-                            ),
-                        ))
-                        .finish(),
-                    SimpleReason::Custom(msg) => builder
-                        .with_message(msg)
-                        .with_label(
-                            Label::new(error.span()).with_message("here"),
-                        )
-                        .finish(),
-                    SimpleReason::Unclosed { .. } => unimplemented!(),
-                };
-
-                report.eprint(&mut ariadne_source).unwrap();
-            }
+            errors
+                .into_iter()
+                .for_each(|error| handle_error(error, &mut ariadne_source));
             return Err(RChefError::Parse);
         }
     };
+    dbg!(recipes);
     //direct_interpreter::run(recipes, spaced)
     Ok(())
+}
+
+fn handle_error(error: Simple<Token>, source: &mut Source) {
+    let builder =
+        Report::<Span>::build(ReportKind::Error, (), error.span().start);
+
+    let report = match error.reason() {
+        SimpleReason::Unexpected => if error.found() == Some(&Token::Error) {
+            builder
+                .with_message("encountered invalid token")
+                .with_label(Label::new(error.span()).with_message("here"))
+        } else {
+            builder
+                .with_message("encountered unexpected token")
+                .with_label(Label::new(error.span()).with_message(format!(
+                    "expected {}, found {}",
+                    error
+                        .expected()
+                        .copied()
+                        .map(pretty_token_opt)
+                        .map(|s| s.fg(Color::Cyan))
+                        .join(", "),
+                    pretty_token_opt(error.found().copied()).fg(Color::Red)
+                )))
+        }
+        .finish(),
+        SimpleReason::Custom(msg) => builder
+            .with_message(msg)
+            .with_label(Label::new(error.span()).with_message("here"))
+            .finish(),
+        SimpleReason::Unclosed { .. } => unimplemented!(),
+    };
+
+    report.eprint(source).unwrap();
+}
+
+fn pretty_token_opt(tok: Option<Token>) -> String {
+    if let Some(tok) = tok {
+        format!("{:?}", tok)
+    } else {
+        "None".to_owned()
+    }
 }
 
 /*
