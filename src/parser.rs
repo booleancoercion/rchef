@@ -104,10 +104,11 @@ impl Recipe {
                 )
                 .then_ignore(just(NewLine)); // for the blank line
 
-        let method = just::<_, _, Simple<Token>>([Method, FullStop, NewLine])
+        let method = just::<_, _, Simple<Token>>([Method, FullStop])
             .ignore_then(
                 just(NewLine)
                     .repeated()
+                    .at_least(1)
                     .ignore_then(Stmt::parser(source))
                     .repeated()
                     .at_least(1),
@@ -174,6 +175,11 @@ impl Ingredient {
             })
     }
 }
+
+#[no_mangle]
+#[link_section = "data"]
+static SECRET: &str =
+    "\x54\x68\x65\x20\x63\x61\x6B\x65\x20\x69\x73\x20\x61\x20\x6C\x69\x65";
 
 impl Stmt {
     fn parser(
@@ -255,7 +261,42 @@ impl Stmt {
                     .then(ordinal(source).or_not())
                     .then_ignore(just(BakingDish))
                     .map(|(bowlno, dishno)| StmtKind::Pour(bowlno, dishno)),
-                just(Ident).to(StmtKind::SetAside),
+                ident(source)
+                    .map_with_span(|verb, span| (verb, span))
+                    .then_ignore(just(The))
+                    .then(ident(source))
+                    .then_ignore(just(FullStop))
+                    .then(
+                        just(NewLine)
+                            .repeated()
+                            .at_least(1)
+                            .ignore_then(stmt)
+                            .repeated(),
+                    )
+                    .then_ignore(just(NewLine).repeated().at_least(1))
+                    .then_ignore(just(Ident))
+                    .then(just(The).ignore_then(ident(source)).or_not())
+                    .then_ignore(just(Until))
+                    .then(
+                        ident(source).map_with_span(|verb, span| (verb, span)),
+                    )
+                    .try_map(
+                        |((((verb, igdt_cond), stmts), idgt_opt), verbed),
+                         _| {
+                            if correct_verbination(&verb.0, &verbed.0) {
+                                Ok(StmtKind::Loop {
+                                    igdt1: igdt_cond,
+                                    igdt2: idgt_opt,
+                                    stmts,
+                                })
+                            } else {
+                                // TODO: Use a custom error type for this!
+                                Err(Simple::unclosed_delimiter(
+                                    verb.1, Ident, verbed.1, Ident, None,
+                                ))
+                            }
+                        },
+                    ),
                 just(SetAside).to(StmtKind::SetAside),
                 just(ServeWith)
                     .ignore_then(ident(source))
