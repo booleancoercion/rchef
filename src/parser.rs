@@ -38,20 +38,20 @@ pub struct Stmt {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum StmtKind {
     Take(String),
-    Put(String, BowlNo),
-    Fold(String, BowlNo),
-    Add(String, BowlNo),
-    Remove(String, BowlNo),
-    Combine(String, BowlNo),
-    Divide(String, BowlNo),
-    AddDry(BowlNo),
+    Put(String, OptOrd),
+    Fold(String, OptOrd),
+    Add(String, OptOrd),
+    Remove(String, OptOrd),
+    Combine(String, OptOrd),
+    Divide(String, OptOrd),
+    AddDry(OptOrd),
     Liquefy(String),
-    LiquefyConts(BowlNo),
-    Stir(BowlNo, BigInt),
-    StirInto(String, BowlNo),
-    Mix(BowlNo),
-    Clean(BowlNo),
-    Pour(BowlNo, BowlNo),
+    LiquefyConts(OptOrd),
+    Stir(OptOrd, BigInt),
+    StirInto(String, OptOrd),
+    Mix(OptOrd),
+    Clean(OptOrd),
+    Pour(OptOrd, OptOrd),
     Loop {
         // Verb ... until verbed
         igdt1: String,
@@ -63,7 +63,7 @@ pub enum StmtKind {
     Refrigerate(Option<NonZeroU32>),
 }
 
-pub type BowlNo = Option<NonZeroU32>;
+pub type OptOrd = Option<(NonZeroU32, Span)>;
 
 pub fn process(
     source: &str,
@@ -79,30 +79,30 @@ pub fn process(
 }
 
 impl Recipe {
-    fn parser(
-        source: &str,
-    ) -> impl Parser<Token, Self, Error = Simple<Token>> + '_ {
+    fn parser(source: &str) -> impl Parser<Token, Self, Error = Simple<Token>> + '_ {
         let title = ident(source)
             .then_ignore(just([FullStop, NewLine, NewLine]))
             .then_ignore(
                 one_of([Ingredients, Method])
                     .rewind()
                     .ignored()
-                    .or(take_until(just([NewLine, NewLine])).ignored()),
-            ); // comments are a SINGLE PARAGRAPH
+                    .or(take_until(
+                        just([NewLine, NewLine]).then(one_of([Ingredients, Method]).rewind()),
+                    )
+                    .ignored()),
+            );
 
         // TODO: Typo detection after title, as a typo will cause
         // a comment block to form
 
-        let ingredients =
-            just::<_, _, Simple<Token>>([Ingredients, FullStop, NewLine])
-                .ignore_then(
-                    Ingredient::parser(source)
-                        .then_ignore(just(NewLine))
-                        .repeated()
-                        .at_least(1),
-                )
-                .then_ignore(just(NewLine)); // for the blank line
+        let ingredients = just::<_, _, Simple<Token>>([Ingredients, FullStop, NewLine])
+            .ignore_then(
+                Ingredient::parser(source)
+                    .then_ignore(just(NewLine))
+                    .repeated()
+                    .at_least(1),
+            )
+            .then_ignore(just(NewLine)); // for the blank line
 
         let method = just::<_, _, Simple<Token>>([Method, FullStop])
             .ignore_then(
@@ -124,10 +124,9 @@ impl Recipe {
             .ignore_then(nonzero_u32(source))
             .then_ignore(just(FullStop))
             .then_ignore(
-                just([NewLine, NewLine])
-                    .then(just(Ident).rewind())
+                just(NewLine)
                     .ignored()
-                    .or(just(NewLine).repeated().then(end()).ignored()),
+                    .or(end().or_not().rewind().ignored()),
             );
 
         title
@@ -144,9 +143,7 @@ impl Recipe {
 }
 
 impl Ingredient {
-    fn parser(
-        source: &str,
-    ) -> impl Parser<Token, Self, Error = Simple<Token>> + '_ {
+    fn parser(source: &str) -> impl Parser<Token, Self, Error = Simple<Token>> + '_ {
         number(source)
             .or_not()
             .then(
@@ -162,29 +159,32 @@ impl Ingredient {
                             if measure == Measure::Ambiguous {
                                 Ok(Measure::Dry)
                             } else {
-                                Err(Simple::custom(span, "Measure type cannot be used with dry or liquid measure"))
+                                Err(Simple::custom(
+                                    span,
+                                    "Measure type cannot be used with dry or liquid measure",
+                                ))
                             }
                         } else {
                             Ok(measure)
                         }
-                    }).or_not(),
+                    })
+                    .or_not(),
             )
             .then(ident(source))
             .map(|((initial_value, measure), name)| Ingredient {
-                name, measure: measure.unwrap_or(Measure::Ambiguous), initial_value
+                name,
+                measure: measure.unwrap_or(Measure::Ambiguous),
+                initial_value,
             })
     }
 }
 
 #[no_mangle]
 #[link_section = "data"]
-static SECRET: &str =
-    "\x54\x68\x65\x20\x63\x61\x6B\x65\x20\x69\x73\x20\x61\x20\x6C\x69\x65";
+static SECRET: &str = "\x54\x68\x65\x20\x63\x61\x6B\x65\x20\x69\x73\x20\x61\x20\x6C\x69\x65";
 
 impl Stmt {
-    fn parser(
-        source: &str,
-    ) -> impl Parser<Token, Self, Error = Simple<Token>> + '_ {
+    fn parser(source: &str) -> impl Parser<Token, Self, Error = Simple<Token>> + '_ {
         let opt_the = || just(The).or_not();
 
         let the_nth_mixing_bowl = || {
@@ -193,8 +193,7 @@ impl Stmt {
                 .then_ignore(just(MixingBowl))
         };
 
-        let opt_the_nth_mixing_bowl =
-            || the_nth_mixing_bowl().or_not().map(Option::flatten);
+        let opt_the_nth_mixing_bowl = || the_nth_mixing_bowl().or_not().map(Option::flatten);
 
         let common_tail = |tok| {
             ident(source).then(
@@ -222,8 +221,7 @@ impl Stmt {
                 common(Combine, Into, StmtKind::Combine),
                 common(Divide, Into, StmtKind::Divide),
                 just(Add).ignore_then(choice((
-                    common_tail(To)
-                        .map(|(name, bowlno)| StmtKind::Add(name, bowlno)),
+                    common_tail(To).map(|(name, bowlno)| StmtKind::Add(name, bowlno)),
                     just(DryIngredients)
                         .ignore_then(
                             just(To)
@@ -245,8 +243,7 @@ impl Stmt {
                         .then(number(source))
                         .then_ignore(just(Minutes))
                         .map(|(bowlno, number)| StmtKind::Stir(bowlno, number)),
-                    common_tail(Into)
-                        .map(|(name, bowlno)| StmtKind::StirInto(name, bowlno)),
+                    common_tail(Into).map(|(name, bowlno)| StmtKind::StirInto(name, bowlno)),
                 ))),
                 just(Mix)
                     .ignore_then(opt_the_nth_mixing_bowl())
@@ -266,6 +263,7 @@ impl Stmt {
                     .then_ignore(just(The))
                     .then(ident(source))
                     .then_ignore(just(FullStop))
+                    .map_with_span(|val, span| (val, span))
                     .then(
                         just(NewLine)
                             .repeated()
@@ -273,26 +271,43 @@ impl Stmt {
                             .ignore_then(stmt)
                             .repeated(),
                     )
-                    .then_ignore(just(NewLine).repeated().at_least(1))
-                    .then_ignore(just(Ident))
-                    .then(just(The).ignore_then(ident(source)).or_not())
-                    .then_ignore(just(Until))
                     .then(
-                        ident(source).map_with_span(|verb, span| (verb, span)),
+                        just(NewLine)
+                            .repeated()
+                            .at_least(1)
+                            .ignore_then(just(Ident))
+                            .ignore_then(just(The).ignore_then(ident(source)).or_not())
+                            .then_ignore(just(Until))
+                            .then(ident(source).map_with_span(|verb, span| (verb, span)))
+                            .or_not(),
                     )
                     .try_map(
-                        |((((verb, igdt_cond), stmts), idgt_opt), verbed),
-                         _| {
-                            if correct_verbination(&verb.0, &verbed.0) {
-                                Ok(StmtKind::Loop {
-                                    igdt1: igdt_cond,
-                                    igdt2: idgt_opt,
-                                    stmts,
-                                })
+                        |((((verb, igdt_cond), first_stmt_span), stmts), ending), _| {
+                            if let Some((idgt_opt, verbed)) = ending {
+                                if correct_verbination(&verb.0, &verbed.0) {
+                                    Ok(StmtKind::Loop {
+                                        igdt1: igdt_cond,
+                                        igdt2: idgt_opt,
+                                        stmts,
+                                    })
+                                } else {
+                                    // TODO: Use a custom error type for this!
+                                    Err(Simple::unclosed_delimiter(
+                                        verb.1,
+                                        Ident,
+                                        verbed.1,
+                                        Ident,
+                                        Some(Ident),
+                                    ))
+                                }
                             } else {
                                 // TODO: Use a custom error type for this!
                                 Err(Simple::unclosed_delimiter(
-                                    verb.1, Ident, verbed.1, Ident, None,
+                                    verb.1,
+                                    Ident,
+                                    first_stmt_span,
+                                    Ident,
+                                    None,
                                 ))
                             }
                         },
@@ -316,49 +331,39 @@ impl Stmt {
     }
 }
 
-fn ident(
-    source: &str,
-) -> impl Parser<Token, String, Error = Simple<Token>> + '_ {
-    just::<_, _, Simple<Token>>(Ident)
-        .map_with_span(|_, span| source[span].to_owned())
+fn ident(source: &str) -> impl Parser<Token, String, Error = Simple<Token>> + '_ {
+    just::<_, _, Simple<Token>>(Ident).map_with_span(|_, span| source[span].to_owned())
 }
 
-fn nonzero_u32(
-    source: &str,
-) -> impl Parser<Token, NonZeroU32, Error = Simple<Token>> + '_ {
+fn nonzero_u32(source: &str) -> impl Parser<Token, NonZeroU32, Error = Simple<Token>> + '_ {
     just::<_, _, Simple<Token>>(Num).try_map(|_, span| {
         let string = &source[span.clone()];
-        str::parse::<NonZeroU32>(string)
-            .map_err(|e| Simple::custom(span, format!("{}", e)))
+        str::parse::<NonZeroU32>(string).map_err(|e| Simple::custom(span, format!("{}", e)))
     })
 }
 
-fn ordinal(
-    source: &str,
-) -> impl Parser<Token, NonZeroU32, Error = Simple<Token>> + '_ {
+fn ordinal(source: &str) -> impl Parser<Token, (NonZeroU32, Span), Error = Simple<Token>> + '_ {
     just::<_, _, Simple<Token>>(Ord).try_map(|_, span| {
-        let span = span.start..span.end - 2;
-        let string = &source[span.clone()];
-        str::parse::<NonZeroU32>(string)
-            .map_err(|e| Simple::custom(span, format!("{}", e)))
+        let numspan = span.start..span.end - 2;
+        let string = &source[numspan.clone()];
+        Ok((
+            str::parse::<NonZeroU32>(string)
+                .map_err(|e| Simple::custom(numspan, format!("{}", e)))?,
+            span,
+        ))
     })
 }
 
-fn number(
-    source: &str,
-) -> impl Parser<Token, BigInt, Error = Simple<Token>> + '_ {
-    just::<_, _, Simple<Token>>(Num)
-        .map_with_span(|_, span| source[span].parse().unwrap())
+fn number(source: &str) -> impl Parser<Token, BigInt, Error = Simple<Token>> + '_ {
+    just::<_, _, Simple<Token>>(Num).map_with_span(|_, span| source[span].parse().unwrap())
 }
 
 /// Checks if the verbs in the given strings match: verb2 essentially needs to be verb1 + "ed",
 /// with special cases considered.
 fn correct_verbination(verb1: &str, verb2: &str) -> bool {
     if verb1.ends_with('e') {
-        verb2.ends_with('d')
-            && verb1.to_lowercase() == verb2[..verb2.len() - 1].to_lowercase()
+        verb2.ends_with('d') && verb1.to_lowercase() == verb2[..verb2.len() - 1].to_lowercase()
     } else {
-        verb2.ends_with("ed")
-            && verb1.to_lowercase() == verb2[..verb2.len() - 2].to_lowercase()
+        verb2.ends_with("ed") && verb1.to_lowercase() == verb2[..verb2.len() - 2].to_lowercase()
     }
 }
