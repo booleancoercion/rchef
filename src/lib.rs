@@ -9,7 +9,6 @@ use ariadne::Fmt;
 use ariadne::Label;
 use ariadne::Report;
 use ariadne::ReportKind;
-use ariadne::Source;
 use chumsky::error::SimpleReason;
 use chumsky::prelude::Simple;
 use itertools::Itertools;
@@ -40,54 +39,98 @@ pub enum RChefError {
 pub fn run(filename: &str, spaced: bool) -> Result<()> {
     let mut source = fs::read_to_string(filename)?;
     source.retain(|c| c != '\r');
-    let mut ariadne_source = Source::from(&source);
     let tokens = lexer::process(&source);
     let recipes = match parser::process(&source, tokens) {
         Ok(recipes) => recipes,
         Err(errors) => {
             errors
                 .into_iter()
-                .for_each(|error| handle_error(error, &mut ariadne_source));
+                .for_each(|error| handle_parse_error(error, filename, &source));
             return Err(RChefError::Parse);
         }
     };
+
+    let mut errored = false;
+    for recipe in &recipes {
+        errored |= ensure_consistent_ordinals(recipe).is_err();
+    }
+    if errored {
+        return Err(RChefError::Parse);
+    }
+
     dbg!(recipes);
     //direct_interpreter::run(recipes, spaced)
     Ok(())
 }
 
-fn handle_error(error: Simple<Token>, source: &mut Source) {
-    let builder =
-        Report::<Span>::build(ReportKind::Error, (), error.span().start);
+fn handle_parse_error(error: Simple<Token>, filename: &str, source: &str) {
+    let builder = Report::build(ReportKind::Error, filename.to_owned(), error.span().start);
 
     let report = match error.reason() {
-        SimpleReason::Unexpected => if error.found() == Some(&Token::Error) {
-            builder
-                .with_message("encountered invalid token")
-                .with_label(Label::new(error.span()).with_message("here"))
-        } else {
-            builder
-                .with_message("encountered unexpected token")
-                .with_label(Label::new(error.span()).with_message(format!(
-                    "expected {}, found {}",
-                    error
-                        .expected()
-                        .copied()
-                        .map(pretty_token_opt)
-                        .map(|s| s.fg(Color::Cyan))
-                        .join(", "),
-                    pretty_token_opt(error.found().copied()).fg(Color::Red)
-                )))
+        SimpleReason::Unexpected => {
+            if error.found() == Some(&Token::Error) {
+                builder.with_message("illegal token").with_label(
+                    Label::new((filename.to_owned(), error.span()))
+                        .with_message("here")
+                        .with_color(Color::Red),
+                )
+            } else {
+                builder.with_message("unexpected token").with_label(
+                    Label::new((filename.to_owned(), error.span()))
+                        .with_message(format!(
+                            "expected {}, found {}",
+                            error
+                                .expected()
+                                .copied()
+                                .map(pretty_token_opt)
+                                .map(|s| s.fg(Color::Cyan))
+                                .join(", "),
+                            pretty_token_opt(error.found().copied()).fg(Color::Red)
+                        ))
+                        .with_color(Color::Red),
+                )
+            }
         }
-        .finish(),
         SimpleReason::Custom(msg) => builder
             .with_message(msg)
-            .with_label(Label::new(error.span()).with_message("here"))
-            .finish(),
-        SimpleReason::Unclosed { .. } => unimplemented!(),
-    };
+            .with_label(Label::new((filename.to_owned(), error.span())).with_message("here")),
+        SimpleReason::Unclosed {
+            span: verb1_span, ..
+        } => {
+            if error.found().is_some() {
+                // wrong verbs
+                builder
+                    .with_message("incompatible loop verbs")
+                    .with_label(
+                        Label::new((filename.to_owned(), verb1_span.clone()))
+                            .with_message("beginning verb here")
+                            .with_color(Color::Green),
+                    )
+                    .with_label(
+                        Label::new((filename.to_owned(), error.span()))
+                            .with_message("incompatible verb here")
+                            .with_color(Color::Red),
+                    )
+                    .with_note(format!(
+                        "loop verbs must make sense together - e.g. '{} ... until {}ed.'",
+                        "Climb".fg(Color::Green),
+                        "climb".fg(Color::Green)
+                    ))
+            } else {
+                // unclosed loop
+                builder.with_message("unclosed loop").with_label(
+                    Label::new((filename.to_owned(), error.span()))
+                        .with_message("this loop is opened but never closed")
+                        .with_color(Color::Red),
+                )
+            }
+        }
+    }
+    .finish();
 
-    report.eprint(source).unwrap();
+    report
+        .eprint(ariadne::sources([(filename.to_owned(), source)]))
+        .unwrap();
 }
 
 fn pretty_token_opt(tok: Option<Token>) -> String {
@@ -96,6 +139,10 @@ fn pretty_token_opt(tok: Option<Token>) -> String {
     } else {
         "None".to_owned()
     }
+}
+
+fn ensure_consistent_ordinals(recipe: &parser::Recipe) -> Result<()> {
+    todo!()
 }
 
 /*
