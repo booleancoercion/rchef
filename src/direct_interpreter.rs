@@ -1,13 +1,10 @@
-use crate::parser::{IgdtBowl, Measure, Recipe, Stmt, StmtKind};
+use crate::parser::{Measure, Recipe, Stmt, StmtKind};
 use crate::{RChefError, Result};
 
-use if_chain::if_chain;
 use num_bigint::BigInt;
 use rand::prelude::SliceRandom;
 
 use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::convert::TryInto;
 use std::io::{self, Write};
 use std::num::NonZeroU32;
 
@@ -24,15 +21,6 @@ pub struct Interpreter {
 
 impl Interpreter {
     pub fn new(recipes: Vec<Recipe>, spaced: bool) -> Result<Self> {
-        if recipes.is_empty() {
-            crate::report_error(
-                0,
-                "syntax ",
-                "programs must contain at least one recipe",
-            );
-            return Err(RChefError::Runtime);
-        }
-
         let main = recipes[0].title.to_lowercase();
         let recipes = recipes
             .into_iter()

@@ -2,6 +2,8 @@
 mod lexer;
 mod parser;
 
+use parser::StmtKind;
+
 pub type Span = std::ops::Range<usize>;
 
 use ariadne::Color;
@@ -17,6 +19,7 @@ use thiserror::Error;
 
 use std::fs;
 use std::io;
+use std::num::NonZeroU32;
 use std::result::Result as StdResult;
 
 pub type Result<T> = StdResult<T, RChefError>;
@@ -52,7 +55,7 @@ pub fn run(filename: &str, spaced: bool) -> Result<()> {
 
     let mut errored = false;
     for recipe in &recipes {
-        errored |= ensure_consistent_ordinals(recipe).is_err();
+        errored |= ensure_consistent_ordinals(recipe, filename, &source).is_err();
     }
     if errored {
         return Err(RChefError::Parse);
@@ -137,209 +140,98 @@ fn pretty_token_opt(tok: Option<Token>) -> String {
     if let Some(tok) = tok {
         format!("{:?}", tok)
     } else {
-        "None".to_owned()
+        "EOF".to_owned()
     }
 }
 
-fn ensure_consistent_ordinals(recipe: &parser::Recipe) -> Result<()> {
-    todo!()
-}
+fn ensure_consistent_ordinals(recipe: &parser::Recipe, filename: &str, source: &str) -> Result<()> {
+    let mut implicit_bowls = vec![];
+    let mut explicit_bowls = vec![];
 
-/*
-#[cfg(test)]
-mod test {
-    use super::direct_interpreter::{Interpreter, Value};
-    use super::lexer;
-    use super::parser::{self, IgdtBowl, Ingredient, Measure, Recipe, Stmt, StmtKind};
-    use super::Result;
+    let mut implicit_dishes = vec![];
+    let mut explicit_dishes = vec![];
 
-    use num_bigint::BigInt;
+    for stmt in &recipe.method {
+        let helper = |opt: &Option<(NonZeroU32, Span)>,
+                      explicit: &mut Vec<Span>,
+                      implicit: &mut Vec<Span>| {
+            if let Some((num, span)) = opt {
+                if u32::from(*num) > 1 {
+                    explicit.push(span.clone())
+                }
+            } else {
+                implicit.push(stmt.span.clone())
+            }
+        };
 
-    use std::num::NonZeroU32;
+        match &stmt.kind {
+            StmtKind::Put(_, bowl)
+            | StmtKind::Fold(_, bowl)
+            | StmtKind::Add(_, bowl)
+            | StmtKind::Remove(_, bowl)
+            | StmtKind::Combine(_, bowl)
+            | StmtKind::Divide(_, bowl)
+            | StmtKind::AddDry(bowl)
+            | StmtKind::LiquefyConts(bowl)
+            | StmtKind::Stir(bowl, _)
+            | StmtKind::StirInto(_, bowl)
+            | StmtKind::Mix(bowl)
+            | StmtKind::Clean(bowl) => helper(bowl, &mut explicit_bowls, &mut implicit_bowls),
 
-    fn do_parse(filename: &str) -> Result<Vec<Recipe>> {
-        let source = std::fs::read_to_string(filename)?;
-        let tokens = lexer::process(&source);
-        parser::process(tokens)
-    }
+            StmtKind::Pour(bowl, dish) => {
+                helper(bowl, &mut explicit_bowls, &mut implicit_bowls);
+                helper(dish, &mut explicit_dishes, &mut implicit_dishes);
+            }
 
-    fn ingredient<S: ToString>(
-        name: S,
-        measure: Measure,
-        initial_value: Option<BigInt>,
-    ) -> Ingredient {
-        Ingredient {
-            name: name.to_string(),
-            measure,
-            initial_value,
+            _ => {}
         }
     }
 
-    fn stmt(kind: StmtKind, line: u32) -> Stmt {
-        Stmt { kind, line }
+    if !(implicit_bowls.is_empty() || explicit_bowls.is_empty()) {
+        Report::build(
+            ReportKind::Error,
+            filename.to_owned(),
+            implicit_bowls[0].start,
+        )
+        .with_message("recipes with more than two bowls cannot refer to bowls implicitly")
+        .with_label(
+            Label::new((filename.to_owned(), implicit_bowls[0].clone()))
+                .with_color(Color::Red)
+                .with_message("implicit reference used here"),
+        )
+        .with_label(
+            Label::new((filename.to_owned(), explicit_bowls[0].clone()))
+                .with_color(Color::Red)
+                .with_message("explicit reference used here"),
+        )
+        .with_note(format!("in recipe '{}'", &recipe.title))
+        .finish()
+        .eprint(ariadne::sources([(filename.to_owned(), source)]))
+        .unwrap();
     }
 
-    fn value(num: BigInt, measure: Measure) -> Value {
-        Value { num, measure }
+    if !(implicit_dishes.is_empty() || explicit_dishes.is_empty()) {
+        Report::build(
+            ReportKind::Error,
+            filename.to_owned(),
+            implicit_dishes[0].start,
+        )
+        .with_message("recipes with more than two dishes cannot refer to dishes implicitly")
+        .with_label(
+            Label::new((filename.to_owned(), implicit_dishes[0].clone()))
+                .with_color(Color::Red)
+                .with_message("implicit reference used here"),
+        )
+        .with_label(
+            Label::new((filename.to_owned(), explicit_dishes[0].clone()))
+                .with_color(Color::Red)
+                .with_message("explicit reference used here"),
+        )
+        .with_note(format!("in recipe '{}'", &recipe.title))
+        .finish()
+        .eprint(ariadne::sources([(filename.to_owned(), source)]))
+        .unwrap();
     }
 
-    #[test]
-    fn hello_world_souffle() -> Result<()> {
-        use Measure::*;
-        use StmtKind::*;
-        let recipes = do_parse("programs/hello_world_souffle.chef")?;
-
-        let expected_recipes = vec![Recipe {
-            title: "Hello World Souffle".into(),
-            ingredients: Some(vec![
-                ingredient("haricot beans", Dry, Some(72.into())),
-                ingredient("eggs", Ambiguous, Some(101.into())),
-                ingredient("lard", Dry, Some(108.into())),
-                ingredient("oil", Ambiguous, Some(111.into())),
-                ingredient("zucchinis", Ambiguous, Some(32.into())),
-                ingredient("water", Liquid, Some(119.into())),
-                ingredient("red salmon", Dry, Some(114.into())),
-                ingredient("dijon mustard", Dry, Some(100.into())),
-                ingredient("potatoes", Ambiguous, Some(33.into())),
-            ]),
-            method: vec![
-                stmt(Put(IgdtBowl("potatoes".into(), None)), 16),
-                stmt(Put(IgdtBowl("dijon mustard".into(), None)), 17),
-                stmt(Put(IgdtBowl("lard".into(), None)), 18),
-                stmt(Put(IgdtBowl("red salmon".into(), None)), 19),
-                stmt(Put(IgdtBowl("oil".into(), None)), 20),
-                stmt(Put(IgdtBowl("water".into(), None)), 21),
-                stmt(Put(IgdtBowl("zucchinis".into(), None)), 22),
-                stmt(Put(IgdtBowl("oil".into(), None)), 23),
-                stmt(Put(IgdtBowl("lard".into(), None)), 24),
-                stmt(Put(IgdtBowl("lard".into(), None)), 25),
-                stmt(Put(IgdtBowl("eggs".into(), None)), 26),
-                stmt(Put(IgdtBowl("haricot beans".into(), None)), 27),
-                stmt(LiquefyConts(None), 28),
-                stmt(Pour(None, None), 29),
-            ],
-            serves: Some(NonZeroU32::new(1).unwrap()),
-        }];
-
-        assert_eq!(recipes, expected_recipes);
-
-        let interpreter = Interpreter::new(recipes, false)?;
-        let state = interpreter.run_and_return_state()?;
-
-        let dish = state.dishes.get(&NonZeroU32::new(1).unwrap()).unwrap();
-        assert_eq!(
-            dish.values,
-            "Hello world!"
-                .chars()
-                .rev()
-                .map(|c| value((c as u32).into(), Measure::Liquid))
-                .collect::<Vec<_>>(),
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn hello_world_cake() -> Result<()> {
-        use Measure::*;
-        use StmtKind::*;
-        let recipes = do_parse("programs/hello_world_cake.chef")?;
-
-        let expected_recipes = vec![
-            Recipe {
-                title: "Hello World Cake with Chocolate sauce".into(),
-                ingredients: Some(vec![
-                    ingredient("chocolate chips", Dry, Some(33.into())),
-                    ingredient("butter", Dry, Some(100.into())),
-                    ingredient("double cream", Liquid, Some(54.into())),
-                    ingredient("baking powder", Dry, Some(2.into())),
-                    ingredient("sugar", Dry, Some(114.into())),
-                    ingredient("beaten eggs", Liquid, Some(111.into())),
-                    ingredient("flour", Dry, Some(119.into())),
-                    ingredient("cocoa powder", Dry, Some(32.into())),
-                    ingredient("cake mixture", Dry, Some(0.into())),
-                ]),
-                method: vec![
-                    stmt(Put(IgdtBowl("chocolate chips".into(), None)), 26),
-                    stmt(Put(IgdtBowl("butter".into(), None)), 27),
-                    stmt(Put(IgdtBowl("sugar".into(), None)), 28),
-                    stmt(Put(IgdtBowl("beaten eggs".into(), None)), 29),
-                    stmt(Put(IgdtBowl("flour".into(), None)), 30),
-                    stmt(Put(IgdtBowl("baking powder".into(), None)), 31),
-                    stmt(Put(IgdtBowl("cocoa powder".into(), None)), 32),
-                    stmt(Stir(None, 1), 33),
-                    stmt(Combine(IgdtBowl("double cream".into(), None)), 34),
-                    stmt(Stir(None, 4), 35),
-                    stmt(LiquefyConts(None), 36),
-                    stmt(Pour(None, None), 37),
-                    stmt(
-                        Loop {
-                            igdt1: "cake mixture".into(),
-                            igdt2: None,
-                            stmts: vec![],
-                        },
-                        38,
-                    ),
-                    stmt(ServeWith("chocolate sauce".into()), 40),
-                ],
-                serves: None,
-            },
-            Recipe {
-                title: "Chocolate sauce".into(),
-                ingredients: Some(vec![
-                    ingredient("sugar", Dry, Some(111.into())),
-                    ingredient("hot water", Liquid, Some(108.into())),
-                    ingredient("heated double cream", Liquid, Some(108.into())),
-                    ingredient("dark chocolate", Dry, Some(101.into())),
-                    ingredient("milk chocolate", Dry, Some(72.into())),
-                ]),
-                method: vec![
-                    stmt(Clean(None), 52),
-                    stmt(Put(IgdtBowl("sugar".into(), None)), 53),
-                    stmt(Put(IgdtBowl("hot water".into(), None)), 54),
-                    stmt(Put(IgdtBowl("heated double cream".into(), None)), 55),
-                    stmt(
-                        Loop {
-                            igdt1: "sugar".into(),
-                            igdt2: Some("sugar".into()),
-                            stmts: vec![],
-                        },
-                        56,
-                    ),
-                    stmt(Liquefy("dark chocolate".into()), 58),
-                    stmt(Put(IgdtBowl("dark chocolate".into(), None)), 59),
-                    stmt(Liquefy("milk chocolate".into()), 60),
-                    stmt(Put(IgdtBowl("milk chocolate".into(), None)), 61),
-                    stmt(LiquefyConts(None), 62),
-                    stmt(Pour(None, None), 63),
-                    stmt(Refrigerate(Some(NonZeroU32::new(1).unwrap())), 64),
-                ],
-                serves: None,
-            },
-        ];
-
-        assert_eq!(recipes, expected_recipes);
-
-        let interpreter = Interpreter::new(recipes, false)?;
-        let state = interpreter.run_and_return_state()?;
-
-        let dish = state.dishes.get(&NonZeroU32::new(1).unwrap()).unwrap();
-        assert_eq!(
-            dish.values,
-            " world!" // the "Hello" part comes from the sous-chef
-                .chars()
-                .rev()
-                .map(|c| value((c as u32).into(), Measure::Liquid))
-                .collect::<Vec<_>>(),
-        );
-        Ok(())
-    }
-
-    /*
-    #[test]
-    fn fib_parses() -> Result<()> {
-        do_parse("programs/fib.chef")
-    }
-
-    */
+    todo!()
 }
-*/
