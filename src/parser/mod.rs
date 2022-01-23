@@ -6,13 +6,16 @@ pub use parse_error::ParseError;
 use Token::*;
 
 use chumsky::{prelude::*, Stream};
+use convert_case::{Case, Casing};
+use lasso::{Rodeo, Spur};
 use num_bigint::BigInt;
 
+use std::cell::UnsafeCell;
 use std::num::NonZeroU32;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Recipe {
-    pub title: String,
+    pub title: Ident,
     pub ingredients: Option<Vec<Ingredient>>,
     pub method: Vec<Stmt>,
     pub serves: Option<NonZeroU32>,
@@ -20,7 +23,7 @@ pub struct Recipe {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Ingredient {
-    pub name: String,
+    pub name: Ident,
     pub measure: Measure,
     pub initial_value: Option<BigInt>,
 }
@@ -40,47 +43,60 @@ pub struct Stmt {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum StmtKind {
-    Take(String),
-    Put(String, OptOrd),
-    Fold(String, OptOrd),
-    Add(String, OptOrd),
-    Remove(String, OptOrd),
-    Combine(String, OptOrd),
-    Divide(String, OptOrd),
+    Take(Ident),
+    Put(Ident, OptOrd),
+    Fold(Ident, OptOrd),
+    Add(Ident, OptOrd),
+    Remove(Ident, OptOrd),
+    Combine(Ident, OptOrd),
+    Divide(Ident, OptOrd),
     AddDry(OptOrd),
-    Liquefy(String),
+    Liquefy(Ident),
     LiquefyConts(OptOrd),
     Stir(OptOrd, BigInt),
-    StirInto(String, OptOrd),
+    StirInto(Ident, OptOrd),
     Mix(OptOrd),
     Clean(OptOrd),
     Pour(OptOrd, OptOrd),
     Loop {
         // Verb ... until verbed
-        igdt1: String,
-        igdt2: Option<String>,
+        igdt1: Ident,
+        igdt2: Option<Ident>,
         stmts: Vec<Stmt>,
     },
     SetAside,
-    ServeWith(String),
+    ServeWith(Ident),
     Refrigerate(Option<NonZeroU32>),
 }
 
 pub type OptOrd = Option<(NonZeroU32, Span)>;
+pub type Ident = (Spur, Span);
 
-pub fn process(source: &str, tokens: Vec<(Token, Span)>) -> Result<Vec<Recipe>, Vec<ParseError>> {
+pub fn process(
+    source: &str,
+    tokens: Vec<(Token, Span)>,
+) -> Result<(Vec<Recipe>, Rodeo), Vec<ParseError>> {
     let last = &tokens.last().unwrap().1;
     let stream = Stream::from_iter(last.end..last.end + 1, tokens.into_iter());
-    Recipe::parser(source)
+
+    // TODO: Replace UnsafeCell solution with parser state once chumsky has that
+    let rodeo = UnsafeCell::new(Rodeo::<Spur>::new());
+
+    let result = Recipe::parser(&rodeo, source)
         .then_ignore(just(NewLine).repeated())
         .repeated()
         .then_ignore(end())
-        .parse(stream)
+        .parse(stream);
+
+    result.map(|recipes| (recipes, rodeo.into_inner()))
 }
 
 impl Recipe {
-    fn parser(source: &str) -> impl Parser<Token, Self, Error = ParseError> + '_ {
-        let title = ident(source)
+    fn parser<'a>(
+        rodeo: &'a UnsafeCell<Rodeo>,
+        source: &'a str,
+    ) -> impl Parser<Token, Self, Error = ParseError> + 'a {
+        let title = title_ident(rodeo, source)
             .then_ignore(just([FullStop, NewLine, NewLine]))
             .then_ignore(
                 one_of([Ingredients, Method])
@@ -97,7 +113,7 @@ impl Recipe {
 
         let ingredients = just::<_, _, ParseError>([Ingredients, FullStop, NewLine])
             .ignore_then(
-                Ingredient::parser(source)
+                Ingredient::parser(rodeo, source)
                     .then_ignore(just(NewLine))
                     .repeated()
                     .at_least(1),
@@ -109,7 +125,7 @@ impl Recipe {
                 just(NewLine)
                     .repeated()
                     .at_least(1)
-                    .ignore_then(Stmt::parser(source))
+                    .ignore_then(Stmt::parser(rodeo, source))
                     .repeated()
                     .at_least(1),
             )
@@ -143,7 +159,10 @@ impl Recipe {
 }
 
 impl Ingredient {
-    fn parser(source: &str) -> impl Parser<Token, Self, Error = ParseError> + '_ {
+    fn parser<'a>(
+        rodeo: &'a UnsafeCell<Rodeo>,
+        source: &'a str,
+    ) -> impl Parser<Token, Self, Error = ParseError> + 'a {
         number(source)
             .or_not()
             .then(
@@ -167,7 +186,7 @@ impl Ingredient {
                     })
                     .or_not(),
             )
-            .then(ident(source))
+            .then(ident(rodeo, source))
             .map(|((initial_value, measure), name)| Ingredient {
                 name,
                 measure: measure.unwrap_or(Measure::Ambiguous),
@@ -181,7 +200,10 @@ impl Ingredient {
 static SECRET: &str = "\x54\x68\x65\x20\x63\x61\x6B\x65\x20\x69\x73\x20\x61\x20\x6C\x69\x65";
 
 impl Stmt {
-    fn parser(source: &str) -> impl Parser<Token, Self, Error = ParseError> + '_ {
+    fn parser<'a>(
+        rodeo: &'a UnsafeCell<Rodeo>,
+        source: &'a str,
+    ) -> impl Parser<Token, Self, Error = ParseError> + 'a {
         let opt_the = || just(The).or_not();
 
         let the_nth_mixing_bowl = || {
@@ -193,7 +215,7 @@ impl Stmt {
         let opt_the_nth_mixing_bowl = || the_nth_mixing_bowl().or_not().map(Option::flatten);
 
         let common_tail = |tok| {
-            ident(source).then(
+            ident(rodeo, source).then(
                 just(tok)
                     .ignore_then(the_nth_mixing_bowl())
                     .or_not()
@@ -210,7 +232,7 @@ impl Stmt {
         recursive(|stmt| {
             choice((
                 just(Take)
-                    .ignore_then(ident(source).map(StmtKind::Take))
+                    .ignore_then(ident(rodeo, source).map(StmtKind::Take))
                     .then_ignore(just([From, Refrigerator])),
                 common(Put, Into, StmtKind::Put),
                 common(Fold, Into, StmtKind::Fold),
@@ -229,7 +251,7 @@ impl Stmt {
                         .map(StmtKind::AddDry),
                 ))),
                 just(Liquefy).ignore_then(choice((
-                    ident(source).map(StmtKind::Liquefy),
+                    ident(rodeo, source).map(StmtKind::Liquefy),
                     just([ContentsOf])
                         .ignore_then(the_nth_mixing_bowl())
                         .map(StmtKind::LiquefyConts),
@@ -255,10 +277,9 @@ impl Stmt {
                     .then(ordinal(source).or_not())
                     .then_ignore(just(BakingDish))
                     .map(|(bowlno, dishno)| StmtKind::Pour(bowlno, dishno)),
-                ident(source)
-                    .map_with_span(|verb, span| (verb, span))
+                ident(rodeo, source)
                     .then_ignore(just(The))
-                    .then(ident(source))
+                    .then(ident(rodeo, source))
                     .then_ignore(just(FullStop))
                     .map_with_span(|val, span| (val, span))
                     .then(
@@ -273,15 +294,15 @@ impl Stmt {
                             .repeated()
                             .at_least(1)
                             .ignore_then(just(Ident))
-                            .ignore_then(just(The).ignore_then(ident(source)).or_not())
+                            .ignore_then(just(The).ignore_then(ident(rodeo, source)).or_not())
                             .then_ignore(just(Until))
-                            .then(ident(source).map_with_span(|verb, span| (verb, span)))
+                            .then(ident(rodeo, source))
                             .or_not(),
                     )
                     .try_map(
                         |((((verb, igdt_cond), first_stmt_span), stmts), ending), _| {
                             if let Some((idgt_opt, verbed)) = ending {
-                                if correct_verbination(&verb.0, &verbed.0) {
+                                if correct_verbination(rodeo, verb.0, verbed.0) {
                                     Ok(StmtKind::Loop {
                                         igdt1: igdt_cond,
                                         igdt2: idgt_opt,
@@ -300,7 +321,7 @@ impl Stmt {
                     ),
                 just(SetAside).to(StmtKind::SetAside),
                 just(ServeWith)
-                    .ignore_then(ident(source))
+                    .ignore_then(ident(rodeo, source))
                     .map(StmtKind::ServeWith),
                 just(Refrigerate)
                     .ignore_then(
@@ -317,8 +338,30 @@ impl Stmt {
     }
 }
 
-fn ident(source: &str) -> impl Parser<Token, String, Error = ParseError> + '_ {
-    just::<_, _, ParseError>(Ident).map_with_span(|_, span| source[span].to_owned())
+fn title_ident<'a>(
+    rodeo: &'a UnsafeCell<Rodeo>,
+    source: &'a str,
+) -> impl Parser<Token, Ident, Error = ParseError> + 'a {
+    just::<_, _, ParseError>(Ident).map_with_span(|_, span| {
+        let string = (&source[span.clone()]).to_case(Case::Title);
+        // SAFETY: the mutable reference's lifetime ends at the end of this closure,
+        // and this code is single-threaded.
+        let rodeo = unsafe { &mut *rodeo.get() };
+        (rodeo.get_or_intern(string), span)
+    })
+}
+
+fn ident<'a>(
+    rodeo: &'a UnsafeCell<Rodeo>,
+    source: &'a str,
+) -> impl Parser<Token, Ident, Error = ParseError> + 'a {
+    just::<_, _, ParseError>(Ident).map_with_span(|_, span| {
+        let string = &source[span.clone()];
+        // SAFETY: the mutable reference's lifetime ends at the end of this closure,
+        // and this code is single-threaded.
+        let rodeo = unsafe { &mut *rodeo.get() };
+        (rodeo.get_or_intern(string), span)
+    })
 }
 
 fn nonzero_u32(source: &str) -> impl Parser<Token, NonZeroU32, Error = ParseError> + '_ {
@@ -345,7 +388,14 @@ fn number(source: &str) -> impl Parser<Token, BigInt, Error = ParseError> + '_ {
 
 /// Checks if the verbs in the given strings match: verb2 essentially needs to be verb1 + "ed",
 /// with special cases considered.
-fn correct_verbination(verb1: &str, verb2: &str) -> bool {
+fn correct_verbination(rodeo: &UnsafeCell<Rodeo>, verb1: Spur, verb2: Spur) -> bool {
+    // SAFETY: This function is never run alongside with an `ident` closure
+    let rodeo = unsafe { &mut *rodeo.get() };
+
+    // SAFETY: These values will only be provided by a `rodeo::get_or_intern` call from earlier
+    let verb1 = unsafe { rodeo.resolve_unchecked(&verb1) };
+    let verb2 = unsafe { rodeo.resolve_unchecked(&verb2) };
+
     if verb1.ends_with('e') {
         verb2.ends_with('d') && verb1.to_lowercase() == verb2[..verb2.len() - 1].to_lowercase()
     } else {

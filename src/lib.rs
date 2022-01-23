@@ -2,24 +2,19 @@ mod direct_interpreter;
 mod lexer;
 mod parser;
 
-use parser::ParseError;
-use parser::StmtKind;
+use parser::{ParseError, StmtKind};
 
 pub type Span = std::ops::Range<usize>;
 
-use ariadne::Color;
-use ariadne::Fmt;
-use ariadne::Label;
-use ariadne::Report;
-use ariadne::ReportKind;
+use ariadne::{Color, Fmt, Label, Report, ReportKind};
 use itertools::Itertools;
+use lasso::Rodeo;
 use lexer::Token;
 use thiserror::Error;
 
-use std::fs;
-use std::io;
 use std::num::NonZeroU32;
 use std::result::Result as StdResult;
+use std::{fs, io};
 
 pub type Result<T> = StdResult<T, RChefError>;
 
@@ -42,7 +37,7 @@ pub fn run(filename: &str, spaced: bool) -> Result<()> {
     let mut source = fs::read_to_string(filename)?;
     source.retain(|c| c != '\r');
     let tokens = lexer::process(&source);
-    let recipes = match parser::process(&source, tokens) {
+    let (recipes, rodeo) = match parser::process(&source, tokens) {
         Ok(recipes) => recipes,
         Err(errors) => {
             errors
@@ -52,9 +47,11 @@ pub fn run(filename: &str, spaced: bool) -> Result<()> {
         }
     };
 
+    // TODO: Add lint for duplicate recipe names
+
     let mut errored = false;
     for recipe in &recipes {
-        errored |= ensure_consistent_ordinals(recipe, filename, &source).is_err();
+        errored |= ensure_consistent_ordinals(&rodeo, recipe, filename, &source).is_err();
     }
     if errored {
         return Err(RChefError::Parse);
@@ -156,7 +153,7 @@ fn pretty_token_opt(tok: Option<Token>) -> String {
 }
 
 macro_rules! consistency {
-    ($filename:ident, $recipe:ident, $source:ident, $implicit:ident, $explicit:ident, $word:literal) => {{
+    ($filename:ident, $title:expr, $source:ident, $implicit:ident, $explicit:ident, $word:literal) => {{
         if !($implicit.is_empty() || $explicit.is_empty()) {
             Report::build(ReportKind::Error, $filename.to_owned(), $implicit[0].start)
                 .with_message(concat!(
@@ -176,7 +173,7 @@ macro_rules! consistency {
                         .with_color(Color::Red)
                         .with_message("explicit reference used here"),
                 )
-                .with_note(format!("in recipe '{}'", &$recipe.title))
+                .with_note(format!("in recipe '{}'", $title))
                 .finish()
                 .eprint(ariadne::sources([($filename.to_owned(), $source)]))
                 .unwrap();
@@ -188,7 +185,12 @@ macro_rules! consistency {
     }};
 }
 
-fn ensure_consistent_ordinals(recipe: &parser::Recipe, filename: &str, source: &str) -> Result<()> {
+fn ensure_consistent_ordinals(
+    rodeo: &Rodeo,
+    recipe: &parser::Recipe,
+    filename: &str,
+    source: &str,
+) -> Result<()> {
     let mut implicit_bowls = vec![];
     let mut explicit_bowls = vec![];
 
@@ -231,9 +233,11 @@ fn ensure_consistent_ordinals(recipe: &parser::Recipe, filename: &str, source: &
         }
     }
 
+    let title = rodeo.resolve(&recipe.title.0);
+
     let mut error = consistency!(
         filename,
-        recipe,
+        title,
         source,
         implicit_bowls,
         explicit_bowls,
@@ -242,7 +246,7 @@ fn ensure_consistent_ordinals(recipe: &parser::Recipe, filename: &str, source: &
 
     error |= consistency!(
         filename,
-        recipe,
+        title,
         source,
         implicit_dishes,
         explicit_dishes,
