@@ -2,6 +2,7 @@
 mod lexer;
 mod parser;
 
+use parser::ParseError;
 use parser::StmtKind;
 
 pub type Span = std::ops::Range<usize>;
@@ -11,8 +12,6 @@ use ariadne::Fmt;
 use ariadne::Label;
 use ariadne::Report;
 use ariadne::ReportKind;
-use chumsky::error::SimpleReason;
-use chumsky::prelude::Simple;
 use itertools::Itertools;
 use lexer::Token;
 use thiserror::Error;
@@ -66,68 +65,82 @@ pub fn run(filename: &str, spaced: bool) -> Result<()> {
     Ok(())
 }
 
-fn handle_parse_error(error: Simple<Token>, filename: &str, source: &str) {
-    let builder = Report::build(ReportKind::Error, filename.to_owned(), error.span().start);
+fn handle_parse_error(error: ParseError, filename: &str, source: &str) {
+    let builder = Report::build(ReportKind::Error, filename.to_owned(), error.offset());
 
-    let report = match error.reason() {
-        SimpleReason::Unexpected => {
-            if error.found() == Some(&Token::Error) {
+    use ParseError::*;
+    let report = match error {
+        Unexpected {
+            span,
+            expected,
+            found,
+        } => {
+            if found == Some(Token::Error) {
                 builder.with_message("illegal token").with_label(
-                    Label::new((filename.to_owned(), error.span()))
+                    Label::new((filename.to_owned(), span))
                         .with_message("here")
                         .with_color(Color::Red),
                 )
             } else {
                 builder.with_message("unexpected token").with_label(
-                    Label::new((filename.to_owned(), error.span()))
+                    Label::new((filename.to_owned(), span))
                         .with_message(format!(
                             "expected {}, found {}",
-                            error
-                                .expected()
-                                .copied()
+                            expected
+                                .into_iter()
                                 .map(pretty_token_opt)
                                 .map(|s| s.fg(Color::Cyan))
                                 .join(", "),
-                            pretty_token_opt(error.found().copied()).fg(Color::Red)
+                            pretty_token_opt(found).fg(Color::Red)
                         ))
                         .with_color(Color::Red),
                 )
             }
         }
-        SimpleReason::Custom(msg) => builder
-            .with_message(msg)
-            .with_label(Label::new((filename.to_owned(), error.span())).with_message("here")),
-        SimpleReason::Unclosed {
-            span: verb1_span, ..
-        } => {
-            if error.found().is_some() {
-                // wrong verbs
-                builder
-                    .with_message("incompatible loop verbs")
-                    .with_label(
-                        Label::new((filename.to_owned(), verb1_span.clone()))
-                            .with_message("beginning verb here")
-                            .with_color(Color::Green),
-                    )
-                    .with_label(
-                        Label::new((filename.to_owned(), error.span()))
-                            .with_message("incompatible verb here")
-                            .with_color(Color::Red),
-                    )
-                    .with_note(format!(
-                        "loop verbs must make sense together - e.g. '{} ... until {}ed.'",
-                        "Climb".fg(Color::Green),
-                        "climb".fg(Color::Green)
-                    ))
-            } else {
-                // unclosed loop
-                builder.with_message("unclosed loop").with_label(
-                    Label::new((filename.to_owned(), error.span()))
-                        .with_message("this loop is opened but never closed")
-                        .with_color(Color::Red),
-                )
-            }
-        }
+
+        InvalidIntLit(span, err) => builder
+            .with_message("invalid integer")
+            .with_label(
+                Label::new((filename.to_owned(), span))
+                    .with_message("here")
+                    .with_color(Color::Red),
+            )
+            .with_note(format!("parsing yielded: {}", err)),
+
+        IncorrectVerbination {
+            loop_verb,
+            invalid_verb,
+        } => builder
+            .with_message("incompatible loop verbs")
+            .with_label(
+                Label::new((filename.to_owned(), loop_verb))
+                    .with_message("beginning verb here")
+                    .with_color(Color::Green),
+            )
+            .with_label(
+                Label::new((filename.to_owned(), invalid_verb))
+                    .with_message("incompatible verb here")
+                    .with_color(Color::Red),
+            )
+            .with_note(format!(
+                "loop verbs must make sense together - e.g. '{} ... until {}ed.'",
+                "Climb".fg(Color::Green),
+                "climb".fg(Color::Green)
+            )),
+
+        UnclosedLoop(span) => builder.with_message("unclosed loop").with_label(
+            Label::new((filename.to_owned(), span))
+                .with_message("this loop is opened but never closed")
+                .with_color(Color::Red),
+        ),
+
+        BadMeasureType(span) => builder
+            .with_message("measure type cannot be used with a dry or liquid measure")
+            .with_label(
+                Label::new((filename.to_owned(), span))
+                    .with_message("measure type used here")
+                    .with_color(Color::Red),
+            ),
     }
     .finish();
 

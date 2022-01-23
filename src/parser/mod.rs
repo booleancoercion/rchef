@@ -1,5 +1,8 @@
+mod parse_error;
+
 use crate::lexer::Token;
 use crate::Span;
+pub use parse_error::ParseError;
 use Token::*;
 
 use chumsky::{prelude::*, Stream};
@@ -65,10 +68,7 @@ pub enum StmtKind {
 
 pub type OptOrd = Option<(NonZeroU32, Span)>;
 
-pub fn process(
-    source: &str,
-    tokens: Vec<(Token, Span)>,
-) -> Result<Vec<Recipe>, Vec<Simple<Token>>> {
+pub fn process(source: &str, tokens: Vec<(Token, Span)>) -> Result<Vec<Recipe>, Vec<ParseError>> {
     let last = &tokens.last().unwrap().1;
     let stream = Stream::from_iter(last.end..last.end + 1, tokens.into_iter());
     Recipe::parser(source)
@@ -79,7 +79,7 @@ pub fn process(
 }
 
 impl Recipe {
-    fn parser(source: &str) -> impl Parser<Token, Self, Error = Simple<Token>> + '_ {
+    fn parser(source: &str) -> impl Parser<Token, Self, Error = ParseError> + '_ {
         let title = ident(source)
             .then_ignore(just([FullStop, NewLine, NewLine]))
             .then_ignore(
@@ -95,7 +95,7 @@ impl Recipe {
         // TODO: Typo detection after title, as a typo will cause
         // a comment block to form
 
-        let ingredients = just::<_, _, Simple<Token>>([Ingredients, FullStop, NewLine])
+        let ingredients = just::<_, _, ParseError>([Ingredients, FullStop, NewLine])
             .ignore_then(
                 Ingredient::parser(source)
                     .then_ignore(just(NewLine))
@@ -104,7 +104,7 @@ impl Recipe {
             )
             .then_ignore(just(NewLine)); // for the blank line
 
-        let method = just::<_, _, Simple<Token>>([Method, FullStop])
+        let method = just::<_, _, ParseError>([Method, FullStop])
             .ignore_then(
                 just(NewLine)
                     .repeated()
@@ -120,7 +120,7 @@ impl Recipe {
                     .or(just(NewLine).repeated().then(end()).ignored()),
             );
 
-        let serves = just::<_, _, Simple<Token>>(Serves)
+        let serves = just::<_, _, ParseError>(Serves)
             .ignore_then(nonzero_u32(source))
             .then_ignore(just(FullStop))
             .then_ignore(
@@ -143,7 +143,7 @@ impl Recipe {
 }
 
 impl Ingredient {
-    fn parser(source: &str) -> impl Parser<Token, Self, Error = Simple<Token>> + '_ {
+    fn parser(source: &str) -> impl Parser<Token, Self, Error = ParseError> + '_ {
         number(source)
             .or_not()
             .then(
@@ -159,10 +159,7 @@ impl Ingredient {
                             if measure == Measure::Ambiguous {
                                 Ok(Measure::Dry)
                             } else {
-                                Err(Simple::custom(
-                                    span,
-                                    "Measure type cannot be used with dry or liquid measure",
-                                ))
+                                Err(ParseError::BadMeasureType(span))
                             }
                         } else {
                             Ok(measure)
@@ -184,7 +181,7 @@ impl Ingredient {
 static SECRET: &str = "\x54\x68\x65\x20\x63\x61\x6B\x65\x20\x69\x73\x20\x61\x20\x6C\x69\x65";
 
 impl Stmt {
-    fn parser(source: &str) -> impl Parser<Token, Self, Error = Simple<Token>> + '_ {
+    fn parser(source: &str) -> impl Parser<Token, Self, Error = ParseError> + '_ {
         let opt_the = || just(The).or_not();
 
         let the_nth_mixing_bowl = || {
@@ -291,24 +288,13 @@ impl Stmt {
                                         stmts,
                                     })
                                 } else {
-                                    // TODO: Use a custom error type for this!
-                                    Err(Simple::unclosed_delimiter(
-                                        verb.1,
-                                        Ident,
-                                        verbed.1,
-                                        Ident,
-                                        Some(Ident),
-                                    ))
+                                    Err(ParseError::IncorrectVerbination {
+                                        loop_verb: verb.1,
+                                        invalid_verb: verbed.1,
+                                    })
                                 }
                             } else {
-                                // TODO: Use a custom error type for this!
-                                Err(Simple::unclosed_delimiter(
-                                    verb.1,
-                                    Ident,
-                                    first_stmt_span,
-                                    Ident,
-                                    None,
-                                ))
+                                Err(ParseError::UnclosedLoop(first_stmt_span))
                             }
                         },
                     ),
@@ -331,31 +317,30 @@ impl Stmt {
     }
 }
 
-fn ident(source: &str) -> impl Parser<Token, String, Error = Simple<Token>> + '_ {
-    just::<_, _, Simple<Token>>(Ident).map_with_span(|_, span| source[span].to_owned())
+fn ident(source: &str) -> impl Parser<Token, String, Error = ParseError> + '_ {
+    just::<_, _, ParseError>(Ident).map_with_span(|_, span| source[span].to_owned())
 }
 
-fn nonzero_u32(source: &str) -> impl Parser<Token, NonZeroU32, Error = Simple<Token>> + '_ {
-    just::<_, _, Simple<Token>>(Num).try_map(|_, span| {
+fn nonzero_u32(source: &str) -> impl Parser<Token, NonZeroU32, Error = ParseError> + '_ {
+    just::<_, _, ParseError>(Num).try_map(|_, span| {
         let string = &source[span.clone()];
-        str::parse::<NonZeroU32>(string).map_err(|e| Simple::custom(span, format!("{}", e)))
+        str::parse::<NonZeroU32>(string).map_err(|e| ParseError::InvalidIntLit(span, e))
     })
 }
 
-fn ordinal(source: &str) -> impl Parser<Token, (NonZeroU32, Span), Error = Simple<Token>> + '_ {
-    just::<_, _, Simple<Token>>(Ord).try_map(|_, span| {
+fn ordinal(source: &str) -> impl Parser<Token, (NonZeroU32, Span), Error = ParseError> + '_ {
+    just::<_, _, ParseError>(Ord).try_map(|_, span| {
         let numspan = span.start..span.end - 2;
         let string = &source[numspan.clone()];
         Ok((
-            str::parse::<NonZeroU32>(string)
-                .map_err(|e| Simple::custom(numspan, format!("{}", e)))?,
+            str::parse::<NonZeroU32>(string).map_err(|e| ParseError::InvalidIntLit(numspan, e))?,
             span,
         ))
     })
 }
 
-fn number(source: &str) -> impl Parser<Token, BigInt, Error = Simple<Token>> + '_ {
-    just::<_, _, Simple<Token>>(Num).map_with_span(|_, span| source[span].parse().unwrap())
+fn number(source: &str) -> impl Parser<Token, BigInt, Error = ParseError> + '_ {
+    just::<_, _, ParseError>(Num).map_with_span(|_, span| source[span].parse().unwrap())
 }
 
 /// Checks if the verbs in the given strings match: verb2 essentially needs to be verb1 + "ed",
