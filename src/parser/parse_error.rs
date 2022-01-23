@@ -18,7 +18,7 @@ pub enum ParseError {
         invalid_verb: Span,
     },
     UnclosedLoop(Span),
-    BadMeasureType(Span), // "Measure type cannot be used with dry or liquid measure"
+    BadMeasureType(Span),
 }
 
 impl ParseError {

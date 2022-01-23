@@ -1,4 +1,4 @@
-//mod direct_interpreter;
+mod direct_interpreter;
 mod lexer;
 mod parser;
 
@@ -60,9 +60,7 @@ pub fn run(filename: &str, spaced: bool) -> Result<()> {
         return Err(RChefError::Parse);
     }
 
-    dbg!(recipes);
-    //direct_interpreter::run(recipes, spaced)
-    Ok(())
+    direct_interpreter::run(recipes, spaced)
 }
 
 fn handle_parse_error(error: ParseError, filename: &str, source: &str) {
@@ -157,6 +155,39 @@ fn pretty_token_opt(tok: Option<Token>) -> String {
     }
 }
 
+macro_rules! consistency {
+    ($filename:ident, $recipe:ident, $source:ident, $implicit:ident, $explicit:ident, $word:literal) => {{
+        if !($implicit.is_empty() || $explicit.is_empty()) {
+            Report::build(ReportKind::Error, $filename.to_owned(), $implicit[0].start)
+                .with_message(concat!(
+                    "recipes with more than two ",
+                    $word,
+                    " cannot refer to ",
+                    $word,
+                    " implicitly"
+                ))
+                .with_label(
+                    Label::new(($filename.to_owned(), $implicit[0].clone()))
+                        .with_color(Color::Red)
+                        .with_message("implicit reference used here"),
+                )
+                .with_label(
+                    Label::new(($filename.to_owned(), $explicit[0].clone()))
+                        .with_color(Color::Red)
+                        .with_message("explicit reference used here"),
+                )
+                .with_note(format!("in recipe '{}'", &$recipe.title))
+                .finish()
+                .eprint(ariadne::sources([($filename.to_owned(), $source)]))
+                .unwrap();
+
+            true
+        } else {
+            false
+        }
+    }};
+}
+
 fn ensure_consistent_ordinals(recipe: &parser::Recipe, filename: &str, source: &str) -> Result<()> {
     let mut implicit_bowls = vec![];
     let mut explicit_bowls = vec![];
@@ -200,51 +231,27 @@ fn ensure_consistent_ordinals(recipe: &parser::Recipe, filename: &str, source: &
         }
     }
 
-    if !(implicit_bowls.is_empty() || explicit_bowls.is_empty()) {
-        Report::build(
-            ReportKind::Error,
-            filename.to_owned(),
-            implicit_bowls[0].start,
-        )
-        .with_message("recipes with more than two bowls cannot refer to bowls implicitly")
-        .with_label(
-            Label::new((filename.to_owned(), implicit_bowls[0].clone()))
-                .with_color(Color::Red)
-                .with_message("implicit reference used here"),
-        )
-        .with_label(
-            Label::new((filename.to_owned(), explicit_bowls[0].clone()))
-                .with_color(Color::Red)
-                .with_message("explicit reference used here"),
-        )
-        .with_note(format!("in recipe '{}'", &recipe.title))
-        .finish()
-        .eprint(ariadne::sources([(filename.to_owned(), source)]))
-        .unwrap();
-    }
+    let mut error = consistency!(
+        filename,
+        recipe,
+        source,
+        implicit_bowls,
+        explicit_bowls,
+        "bowls"
+    );
 
-    if !(implicit_dishes.is_empty() || explicit_dishes.is_empty()) {
-        Report::build(
-            ReportKind::Error,
-            filename.to_owned(),
-            implicit_dishes[0].start,
-        )
-        .with_message("recipes with more than two dishes cannot refer to dishes implicitly")
-        .with_label(
-            Label::new((filename.to_owned(), implicit_dishes[0].clone()))
-                .with_color(Color::Red)
-                .with_message("implicit reference used here"),
-        )
-        .with_label(
-            Label::new((filename.to_owned(), explicit_dishes[0].clone()))
-                .with_color(Color::Red)
-                .with_message("explicit reference used here"),
-        )
-        .with_note(format!("in recipe '{}'", &recipe.title))
-        .finish()
-        .eprint(ariadne::sources([(filename.to_owned(), source)]))
-        .unwrap();
-    }
+    error |= consistency!(
+        filename,
+        recipe,
+        source,
+        implicit_dishes,
+        explicit_dishes,
+        "dishes"
+    );
 
-    todo!()
+    if error {
+        Err(RChefError::Parse)
+    } else {
+        Ok(())
+    }
 }
